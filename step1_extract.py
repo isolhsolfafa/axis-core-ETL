@@ -246,11 +246,12 @@ def parse_sn(raw_sn: str) -> list:
 # ── Excel 파싱 ──────────────────────────────────────────────
 
 def _find_column(df, candidates):
-    """DataFrame에서 후보 컬럼명 중 존재하는 것 반환"""
+    """DataFrame에서 후보 컬럼명 중 존재하는 것 반환 (공백/줄바꿈 무시)"""
     for col in df.columns:
-        col_str = str(col).strip()
+        col_normalized = re.sub(r"\s+", "", str(col))
         for c in candidates:
-            if c in col_str:
+            c_normalized = re.sub(r"\s+", "", c)
+            if c_normalized in col_normalized:
                 return col
     return None
 
@@ -286,12 +287,34 @@ def _find_extra_column(df, col_name: str, fallback_index: int):
     return None
 
 
+# 날짜 필드 목록 (이 필드만 date 포맷 적용)
+DATE_FIELDS = {
+    "mech_start", "mech_end", "elec_start", "elec_end",
+    "pressure_test", "self_inspect", "process_inspect",
+    "finishing_start", "planned_finish",
+}
+
+
 def _format_date_value(val):
     """날짜 값을 YYYY-MM-DD 문자열로 변환"""
     if pd.isna(val):
         return ''
     if hasattr(val, 'strftime'):
         return val.strftime('%Y-%m-%d')
+    # 문자열 날짜도 처리 (예: "2026-03-15 00:00:00")
+    s = str(val).strip()
+    if len(s) >= 10 and s[4] == '-' and s[7] == '-':
+        return s[:10]
+    return s
+
+
+def _format_text_value(val):
+    """텍스트 값 변환 (모델명, 업체명 등 비날짜 필드)"""
+    if pd.isna(val):
+        return ''
+    # Excel에서 숫자로 저장된 경우 소수점 제거 (2100.0 → "2100")
+    if isinstance(val, float) and val == int(val):
+        return str(int(val))
     return str(val).strip()
 
 
@@ -362,13 +385,20 @@ def extract_from_teams_excel():
             if eng_key == "serial_number":
                 continue
             val = row[df_col]
-            base_item[eng_key] = _format_date_value(val)
+            if eng_key in DATE_FIELDS:
+                base_item[eng_key] = _format_date_value(val)
+            else:
+                base_item[eng_key] = _format_text_value(val)
 
-        # 추가 컬럼 추출
+        # 추가 컬럼 추출 (날짜/텍스트 분기)
+        EXTRA_DATE_FIELDS = {"semi_product_start", "finishing_plan_end"}
         for field_key, series in extra_series.items():
             if series is not None:
                 val = series.iloc[df.index.get_loc(idx)]
-                base_item[field_key] = _format_date_value(val)
+                if field_key in EXTRA_DATE_FIELDS:
+                    base_item[field_key] = _format_date_value(val)
+                else:
+                    base_item[field_key] = _format_text_value(val)
             else:
                 base_item[field_key] = ''
 

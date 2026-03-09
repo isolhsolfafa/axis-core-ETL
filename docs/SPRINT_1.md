@@ -199,8 +199,93 @@ python etl_main.py --all
 ---
 
 ## 완료 조건
-- [ ] step2_load.py UPSERT 전환 완료
-- [ ] 연도 필터링 동작 확인 (25년 데이터 제외)
-- [ ] finishing_plan_end DB 적재 확인
-- [ ] 로컬 테스트 통과 (소량 → 재실행 → 전체)
+- [x] step2_load.py UPSERT 전환 완료
+- [x] 연도 필터링 동작 확인 (25년 데이터 제외)
+- [x] finishing_plan_end DB 적재 확인
+- [x] 로컬 테스트 통과 (소량 → 재실행 → 전체)
 - [ ] push + GitHub Actions workflow_dispatch 수동 실행 확인
+
+---
+
+## Sprint 1-Debugging: Bug Fix — 컬럼 매핑 및 값 변환 오류
+
+> 날짜: 2026-03-09
+> 원인: ETL 실행 후 DB 적재 데이터 검증 시 발견
+
+### 증상
+- **모델명(model)**: Excel 원본값과 다르게 적재됨 (예: 숫자 모델명 `2100` → `2100.0`)
+- **elec_start, elec_end, pi_start, qi_start**: 값 누락 또는 잘못된 값 적재
+
+### 원인 분석
+
+**1) `_format_date_value()` 일괄 적용 문제**
+- 모든 필드(텍스트 포함)에 날짜 포맷 함수가 적용됨
+- model_name, customer, line 등 텍스트 필드가 날짜 변환 로직을 거침
+- Excel에서 숫자로 저장된 값이 float 변환 시 소수점 발생 (2100 → 2100.0)
+
+**2) `_find_column()` 공백/줄바꿈 미처리**
+- Excel 헤더에 셀 내 줄바꿈 포함 시 (예: "전장\n시작") 매칭 실패
+- "전장시작"으로 검색해도 "전장\n시작" 컬럼을 찾지 못함
+- 매칭 실패 → col_map에 미등록 → 해당 필드 데이터 누락
+
+### 수정 내용
+
+**1) `_find_column()` 정규화 매칭 (step1_extract.py)**
+```python
+def _find_column(df, candidates):
+    """DataFrame에서 후보 컬럼명 중 존재하는 것 반환 (공백/줄바꿈 무시)"""
+    for col in df.columns:
+        col_normalized = re.sub(r"\s+", "", str(col))
+        for c in candidates:
+            c_normalized = re.sub(r"\s+", "", c)
+            if c_normalized in col_normalized:
+                return col
+    return None
+```
+
+**2) 날짜/텍스트 필드 분리 처리**
+```python
+DATE_FIELDS = {
+    "mech_start", "mech_end", "elec_start", "elec_end",
+    "pressure_test", "self_inspect", "process_inspect",
+    "finishing_start", "planned_finish",
+}
+
+def _format_text_value(val):
+    """텍스트 값 변환 (모델명, 업체명 등 비날짜 필드)"""
+    if pd.isna(val):
+        return ''
+    if isinstance(val, float) and val == int(val):
+        return str(int(val))  # 2100.0 → "2100"
+    return str(val).strip()
+```
+
+**3) 추출 루프 분기 적용**
+```python
+for eng_key, df_col in col_map.items():
+    val = row[df_col]
+    if eng_key in DATE_FIELDS:
+        base_item[eng_key] = _format_date_value(val)
+    else:
+        base_item[eng_key] = _format_text_value(val)
+```
+
+**4) `_format_date_value()` 강화**
+- 문자열 날짜 "2026-03-15 00:00:00" → "2026-03-15" 잘라내기 추가
+
+**5) EXTRA_COLUMNS 추출 분기 누락 수정**
+- `module_outsourcing`(모듈외주)은 업체명 텍스트인데 `_format_date_value()` 적용되고 있었음
+- `EXTRA_DATE_FIELDS = {"semi_product_start", "finishing_plan_end"}` 분기 추가
+- 날짜 필드만 date 포맷, 나머지는 `_format_text_value()` 적용
+
+### 수정 파일
+
+| 파일 | 수정 내용 |
+|------|----------|
+| `step1_extract.py` | `_find_column()` 정규화, `DATE_FIELDS` 분리, `_format_text_value()` 추가 |
+
+### 검증
+- [ ] 모델명 원본 일치 확인 (Excel ↔ DB)
+- [ ] elec_start, elec_end 날짜 정상 적재 확인
+- [ ] pi_start, qi_start 날짜 정상 적재 확인
+- [ ] 기존 정상 필드 (mech_start, S/N 등) 영향 없음 확인
