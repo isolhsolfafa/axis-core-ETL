@@ -63,3 +63,41 @@ requirements.txt                                # 의존성
 .env                                            # 로컬 환경변수 (git 제외)
 .github/workflows/etl-metadata-sync.yml         # GitHub Actions cron
 ```
+
+---
+
+## Sprint 1: UPSERT + 컬럼 매핑 교정 + 데이터 누락 해결 (2026-03-09) ✅
+
+### 목표
+INSERT → UPSERT 전환, finishing_plan_end 적재, 컬럼 매핑 버그 수정으로 SCR-Schedule과 동일한 적재 결과 달성.
+
+### 완료 내역
+
+**UPSERT 전환 + 에러 격리**
+- step2_load.py: INSERT → `ON CONFLICT DO UPDATE` UPSERT
+- `WHERE IS DISTINCT FROM` 조건으로 실제 변경된 경우만 UPDATE
+- SAVEPOINT 패턴으로 레코드 단위 롤백 (에러 시 다른 레코드에 영향 없음)
+
+**컬럼 매핑 버그 수정 (핵심)**
+- `_find_column()` 정규화 매칭: 공백/줄바꿈 무시 + 정확매칭 우선
+- COLUMN_ALIASES 추가: Excel 실제 헤더명 대체 검색어 (SCR-Schedule config.py 기준)
+- 날짜/텍스트 필드 분리: `DATE_FIELDS` + `_format_text_value()` (float 소수점 제거)
+
+**COLUMN_MAPPING SCR-Schedule 기준 교정 (39건 → 158건)**
+- **원인**: "기구시작"(실적일, col 49) 매칭 → "기구계획시작일"(계획일, col 46)이 정확
+- COLUMN_MAPPING 17개 전체를 SCR-Schedule config.py 기준 컬럼명으로 교체
+- COLUMN_ALIASES는 기존 약자를 fallback으로 유지
+- `semi_product_start` 컬럼명: "반제품시작" → "모듈계획시작일" 수정
+- 결과: 3월 기준 ETL 40건 → **158건** (SCR-Schedule과 일치)
+
+**추가 컬럼**
+- `finishing_plan_end` (마무리계획종료일): 컬럼명 탐색 + index 72 fallback
+- `sales_note` (특이사항영업): EXTRA_COLUMNS에 CJ열(index 87) 추가
+
+**데이터 누락 분석**
+- ETL vs SCR-Schedule 비교 진단 스크립트 (`compare_etl_vs_scr.py`)
+- 원인 분류: 컬럼명 매칭 방식 차이 > pd.read_excel vs Graph API JSON > step2 에러 누적
+
+### 미해결
+- GBWS-6834: `module_start`에 "5083 모듈" 텍스트 → DATE 타입 에러 (현장 확인 필요, BACKLOG #6)
+- 모델명 풀네임: Excel F열에 약자 저장 (풀네임 필요 시 매핑 테이블 별도 추가)
