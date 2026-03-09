@@ -63,11 +63,15 @@ def load_to_postgres(metadata_list, db_url=None):
     cursor.execute("SET timezone = 'Asia/Seoul'")
 
     results = []
+    error_count = 0
     for item in metadata_list:
         sn = item['serial_number']
         mech_start = item.get('mech_start') or None
 
         try:
+            # SAVEPOINT로 레코드 단위 롤백 (다른 레코드에 영향 없음)
+            cursor.execute("SAVEPOINT sp_record")
+
             # 1) plan.product_info UPSERT
             # WHERE 절: 실제 변경된 경우만 UPDATE (동일 데이터 재실행 시 "동일"로 분류)
             params = (
@@ -197,6 +201,9 @@ def load_to_postgres(metadata_list, db_url=None):
                 status = 'updated'
                 print(f"  [🔄 변경] {sn} (plan:{product_id})")
 
+            # SAVEPOINT 해제 (성공)
+            cursor.execute("RELEASE SAVEPOINT sp_record")
+
             results.append({
                 'id': product_id,
                 'serial_number': sn,
@@ -207,11 +214,10 @@ def load_to_postgres(metadata_list, db_url=None):
             })
 
         except Exception as e:
-            conn.rollback()
+            # 해당 레코드만 롤백, 이전 성공 레코드는 유지
+            cursor.execute("ROLLBACK TO SAVEPOINT sp_record")
+            error_count += 1
             print(f"  [❌ Error] {sn}: {e}")
-            conn = psycopg2.connect(db_url)
-            cursor = conn.cursor()
-            cursor.execute("SET timezone = 'Asia/Seoul'")
 
     conn.commit()
     conn.close()
@@ -221,6 +227,8 @@ def load_to_postgres(metadata_list, db_url=None):
     updated = sum(1 for r in results if r['status'] == 'updated')
     unchanged = sum(1 for r in results if r['status'] == 'unchanged')
     print(f"[Load] PostgreSQL 적재 완료: 신규 {inserted}건, 변경 {updated}건, 동일 {unchanged}건")
+    if error_count > 0:
+        print(f"[Load] ⚠️ 에러 {error_count}건 (해당 레코드 스킵, 나머지 정상 커밋)")
     return results
 
 
