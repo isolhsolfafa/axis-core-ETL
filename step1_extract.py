@@ -189,30 +189,56 @@ def parse_sn(raw_sn: str) -> list:
     """
     S/N 문자열을 개별 S/N 리스트로 분리
     예:
-      "GBWS-6408"         → ["GBWS-6408"]
-      "GBWS-6408~6410"    → ["GBWS-6408", "GBWS-6409", "GBWS-6410"]
-      "GBWS-6408, GBWS-6409" → ["GBWS-6408", "GBWS-6409"]
+      "GBWS-6408"              → ["GBWS-6408"]
+      "GBWS-6408~6410"         → ["GBWS-6408", "GBWS-6409", "GBWS-6410"]
+      "GBWS-6408, GBWS-6409"   → ["GBWS-6408", "GBWS-6409"]
+      "DBW-3715,3716"          → ["DBW-3715", "DBW-3716"]  (접두사 자동 보완)
+      "GPWS-0340~0342"         → ["GPWS-0340", "GPWS-0341", "GPWS-0342"]  (선행 0 보존)
     """
     raw_sn = str(raw_sn).strip()
     if not raw_sn:
         return []
 
-    # 쉼표 분리
+    # 쉼표 분리 (접두사 없는 항목에 첫 번째 항목의 접두사 적용)
     if "," in raw_sn:
-        return [s.strip() for s in raw_sn.split(",") if s.strip()]
+        items = [s.strip() for s in raw_sn.split(",") if s.strip()]
+        if not items:
+            return []
 
-    # ~ 범위 분리 (예: GBWS-6408~6410)
+        # 첫 번째 항목에서 접두사 추출
+        first_match = re.match(r"([A-Za-z]+-)", items[0])
+        prefix = first_match.group(1) if first_match else ""
+
+        # 숫자 자릿수 (선행 0 보존)
+        num_match = re.search(r"(\d+)$", items[0])
+        num_width = len(num_match.group(1)) if num_match else 0
+
+        result = [items[0]]
+        for item in items[1:]:
+            if re.match(r"[A-Za-z]", item):
+                # 이미 접두사가 있는 경우 그대로
+                result.append(item)
+            elif prefix and item.isdigit():
+                # 숫자만 있으면 접두사 + 자릿수 맞춤
+                result.append(f"{prefix}{item.zfill(num_width)}")
+            else:
+                result.append(item)
+        return result
+
+    # ~ 범위 분리 (예: GBWS-6408~6410, GPWS-0340~0342)
     if "~" in raw_sn:
         parts = raw_sn.split("~")
         if len(parts) == 2:
             prefix_match = re.match(r"([A-Za-z]+-?)(\d+)", parts[0].strip())
             if prefix_match:
                 prefix = prefix_match.group(1)
-                start_num = int(prefix_match.group(2))
+                num_str = prefix_match.group(2)
+                num_width = len(num_str)  # 선행 0 보존용 자릿수
+                start_num = int(num_str)
                 end_match = re.search(r"(\d+)", parts[1].strip())
                 if end_match:
                     end_num = int(end_match.group(1))
-                    return [f"{prefix}{n}" for n in range(start_num, end_num + 1)]
+                    return [f"{prefix}{str(n).zfill(num_width)}" for n in range(start_num, end_num + 1)]
 
     return [raw_sn]
 

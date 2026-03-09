@@ -21,6 +21,9 @@ import json
 import argparse
 from datetime import datetime
 
+from dotenv import load_dotenv
+load_dotenv()
+
 from step1_extract import extract_from_teams_excel, filter_by_date, filter_by_date_range
 from step2_load import load_to_postgres
 
