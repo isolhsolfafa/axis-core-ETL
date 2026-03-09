@@ -264,13 +264,26 @@ def parse_sn(raw_sn: str) -> list:
 # ── Excel 파싱 ──────────────────────────────────────────────
 
 def _find_column(df, candidates):
-    """DataFrame에서 후보 컬럼명 중 존재하는 것 반환 (공백/줄바꿈 무시)"""
-    for col in df.columns:
-        col_normalized = re.sub(r"\s+", "", str(col))
-        for c in candidates:
-            c_normalized = re.sub(r"\s+", "", c)
+    """
+    DataFrame에서 후보 컬럼명 중 존재하는 것 반환 (공백/줄바꿈 무시)
+    매칭 우선순위: 1) 정확히 일치 → 2) 부분 문자열 매칭
+    """
+    normalized_cols = {col: re.sub(r"\s+", "", str(col)) for col in df.columns}
+
+    # 1차: 정확히 일치 (정규화 후)
+    for c in candidates:
+        c_normalized = re.sub(r"\s+", "", c)
+        for col, col_normalized in normalized_cols.items():
+            if c_normalized == col_normalized:
+                return col
+
+    # 2차: 부분 문자열 매칭 (후보 순서 우선)
+    for c in candidates:
+        c_normalized = re.sub(r"\s+", "", c)
+        for col, col_normalized in normalized_cols.items():
             if c_normalized in col_normalized:
                 return col
+
     return None
 
 
@@ -385,8 +398,9 @@ def extract_from_teams_excel():
         matched_col = _find_column(df, candidates)
         if matched_col is not None:
             col_map[eng_key] = matched_col
+            print(f"  [ColMap] {kor_key} ({eng_key}) → '{matched_col}'")
         else:
-            print(f"  [Warning] '{kor_key}' ({eng_key}) 컬럼 매칭 실패 — 후보: {candidates}")
+            print(f"  [⚠️ Warning] '{kor_key}' ({eng_key}) 컬럼 매칭 실패 — 후보: {candidates}")
 
     # 행별 변환 + S/N split
     converted = []
