@@ -330,3 +330,167 @@ COLUMN_ALIASES = {
 
 ### 미해결 (Backlog)
 - **모델명 풀네임**: Excel F열에 약자 저장 (DRG S 등). 풀네임 필요 시 약자↔풀네임 매핑 테이블 또는 별도 컬럼 추가 필요
+
+---
+
+## Sprint 1-Investigation: ETL 데이터 누락 분석 (158건 → 39건)
+
+> 날짜: 2026-03-09
+> 증상: 3월 Excel 데이터 158건, POC 대시보드(SCR-Schedule) 100건+, ETL DB 39건
+> 동일 data source (SCR 생산현황 Excel) 사용
+
+### SCR-Schedule vs AXIS-CORE ETL 비교 분석
+
+같은 Excel 파일을 읽는데 결과가 다른 원인을 코드 레벨에서 비교.
+
+| 항목 | SCR-Schedule (POC) | AXIS-CORE ETL | 차이 영향 |
+|------|-------------------|---------------|----------|
+| **컬럼 접근** | 인덱스 기반 `row.iloc[col_idx - 1]` | 컬럼명 매칭 `_find_column()` | **ETL 매칭 실패 시 필드 누락** |
+| **S/N 인덱스** | `("S/N", 31)` — AF열 고정 | `_find_column(df, ["S/N", "SN", "시리얼"])` | 매칭 성공하면 동일 |
+| **기구시작 인덱스** | `("기구계획시작일", 46)` — AT열 고정 | COLUMN_ALIASES `["기구계획시작일"]` 매칭 | 매칭 성공하면 동일 |
+| **데이터 로딩** | Graph API `usedRange` JSON (값 직접 수신) | 파일 다운로드 + `pd.read_excel()` | **Excel 수식/형식 차이 가능** |
+| **날짜 필터 (3월)** | `filter_month_range=2` → {1,2,3,4,5월} | 반기 `2025-11-01 ~ 2026-04-30` | **범위는 ETL이 더 넓음 — 필터 문제 아님** |
+| **빈 기구시작** | `else: continue` (스킵) | `item.get('mech_start', '') → falsy → 스킵` | 동일 동작 |
+| **에러 핸들링** | 개별 필드 실패 → 빈 문자열, 행은 유지 | step2 KeyError → SAVEPOINT 롤백 → **행 전체 스킵** | **ETL이 더 많이 탈락** |
+
+### 핵심 원인 (반기 필터 아님)
+
+반기 필터 범위(~2026-04-30)는 3월 데이터를 포함하므로 필터 문제가 아님.
+**ETL Extract → Load 과정에서 대량 탈락** 발생.
+
+**원인 1: 컬럼명 매칭 방식 — 가장 유력**
+- SCR-Schedule은 인덱스로 직접 접근하므로 항상 성공
+- ETL은 `_find_column()`으로 컬럼명 매칭 → Excel 헤더 변경/병합 시 실패
+- 매칭 실패한 필드는 `col_map`에 미등록 → `base_item`에 해당 키 없음
+- step2에서 `item['model_name']` 접근 시 KeyError → SAVEPOINT 롤백 → 행 스킵
+
+**원인 2: pd.read_excel() vs Graph API JSON 차이**
+- Graph API는 Excel 수식 결과값을 직접 반환 (= 화면에 보이는 값)
+- `pd.read_excel()`은 openpyxl로 파싱 — 셀 형식/병합/수식 처리가 다를 수 있음
+- 특히 병합 셀 영역에서 NaN이 대량 발생 가능 → S/N 빈 행 제거 시 대량 탈락
+
+**원인 3: step2 에러 누적**
+- DB 제약 조건 위반 (날짜 형식, NOT NULL 등) → SAVEPOINT 롤백
+- 현재 에러 로그가 단순해서 정확한 실패 건수/원인 파악 어려움
+
+### 전체 누락 원인 분류 (수정)
+
+| # | 단계 | 원인 | 심각도 | 영향 |
+|---|------|------|--------|------|
+| 1 | **Extract** | 컬럼명 매칭 실패 → 필드 누락 → step2 KeyError | 🔴 높음 | 대량 행 스킵 |
+| 2 | **Extract** | pd.read_excel 병합 셀 NaN → S/N 빈 행 제거 대량 발생 | 🔴 높음 | Excel 구조 의존 |
+| 3 | **Load** | DB 제약 위반 → SAVEPOINT 롤백 → 레코드 스킵 | 🟡 중간 | 날짜/형식 오류 |
+| 4 | Extract | `parse_sn()` 비표준 형식 → 빈 리스트 → 행 스킵 | 🟡 중간 | 소수 |
+| 5 | Filter | 기구시작일 비어있으면 범위 필터에서 탈락 | 🟡 중간 | 일부 |
+
+### 개선 방안
+
+**방안 1: SCR-Schedule처럼 인덱스 기반 fallback 추가 (권장)**
+- COLUMN_MAPPING에 SCR-Schedule config.py의 인덱스를 fallback으로 추가
+- `_find_column()` 실패 시 인덱스로 직접 접근
+```python
+# SCR-Schedule config.py 기준 인덱스 (1-based)
+COLUMN_INDEX_FALLBACK = {
+    "serial_number": 31,   # S/N — AF열
+    "model_name": 6,       # Model — F열
+    "order_no": 2,         # 판매오더 — B열
+    "customer": 4,         # 고객사 — D열
+    "product_code": 7,     # 제품번호 — G열
+    "line": 5,             # 라인 — E열
+    "mech_partner": 39,    # 기구외주
+    "elec_partner": 40,    # 전장외주
+    "mech_start": 46,      # 기구계획시작일 — AT열
+    "mech_end": 48,        # 기구계획종료일
+    "elec_start": 51,      # 전장계획시작일
+    "elec_end": 52,        # 전장계획종료일
+    "pressure_test": 58,   # 가압계획시작일
+    "self_inspect": 62,    # 가동검사계획시작일
+    "process_inspect": 66, # TEST계획시작일
+    "finishing_start": 72, # 마무리계획시작일
+    "planned_finish": 21,  # 출고계획일 — U열
+}
+```
+
+**방안 2: 디버그 로그 강화 — 즉시 적용**
+- step1: Extract 후 총 행수, S/N 빈 행 제거 수, parse_sn 실패 수 출력
+- step2: 에러 유형별 카운트 + 샘플 SN 출력
+```python
+# step2 에러 상세 추적
+error_details = {}
+except Exception as e:
+    err_type = type(e).__name__
+    error_details.setdefault(err_type, []).append(sn)
+# 요약 출력
+for err_type, sns in error_details.items():
+    print(f"  [{err_type}] {len(sns)}건 — 샘플: {sns[:3]}")
+```
+
+**방안 3: cron 기본 동작을 `--all`로 변경**
+- UPSERT이므로 전체 적재해도 부하 없음
+- 반기 필터 제거하면 기구시작일 비어있는 건도 포함
+
+### parse_sn() 처리 한계 (참고)
+
+현재 지원하는 형식:
+- 단일: `GBWS-6408` → `["GBWS-6408"]`
+- 쉼표: `GBWS-6408, GBWS-6409` → `["GBWS-6408", "GBWS-6409"]`
+- 쉼표(접두사 보완): `DBW-3715,3716` → `["DBW-3715", "DBW-3716"]`
+- 범위: `GBWS-6408~6410` → `["GBWS-6408", "GBWS-6409", "GBWS-6410"]`
+
+미지원 형식 (파싱 실패 시 원본 그대로 반환):
+- 접두사 없는 숫자 범위: `6408~6410`
+- 혼합: `GBWS-6408~6410, 6412`
+
+### 검증 방법
+
+```bash
+# 1) 26년 3월 기준 실행하여 Extract 건수 확인
+python etl_main.py --start 2026-03-01 --end 2026-03-31
+
+# 2) 로그에서 확인할 것:
+#    - [Extract] Teams Excel 데이터 N건 추출 완료
+#    - [⚠️ Warning] 컬럼 매칭 실패 목록
+#    - [❌ Error] 에러 건수 및 원인
+#    - [Load] 신규 N건, 변경 N건, 동일 N건
+
+# 3) POC 대시보드 건수와 비교
+#    - SCR-Schedule 실행 후 출력되는 "대시보드 데이터 추출: N건"과 대조
+```
+
+---
+
+## 추가 조사 항목 (Sprint 2 범위)
+
+> 2026-03-09 정리
+
+### 1. 출고 완료 시 상태 변경
+- **Source**: R열 "출고" 컬럼
+- **동작**: 출고 값 존재 시 `qr_registry.status`를 `'shipped'`(또는 `'completed'`)로 변경
+- **구현 위치**: step2_load.py UPSERT 로직 내 조건 분기 추가
+
+### 2. 신규여부 컬럼 추가
+- **Source**: N열 "신규여부"
+- **값**: 양산(기본), 신규, 계약변경
+- **DB**: `plan.product_info`에 `contract_type VARCHAR` 컬럼 추가 필요
+- **ETL**: step1 EXTRA_COLUMNS + step2 매핑 추가
+- **계약변경 시**: 해당 행에 Excel 메모(comment) 존재 여부 확인 필요 → openpyxl `cell.comment` 접근
+
+### 3. Excel 메모/노트(comment) 추출
+- **배경**: 계약변경 발생 시 Excel 셀에 메모 형태로 변경 사유 기록
+- **확인 필요**: openpyxl로 `ws.cell(row, col).comment.text` 접근 가능한지
+- **주의**: pandas `read_excel()`은 comment를 읽지 못함 → openpyxl 직접 접근 필요
+- **구현 방향**: step1에서 openpyxl로 별도 comment 추출 후 metadata에 추가
+
+### 4. 특이사항(영업) CJ열
+- **Source**: CJ열(index 87) "특이사항(영업)"
+- **현재**: step1 `EXTRA_COLUMNS`에 `sales_note` 추가 완료
+- **남은 작업**:
+  - DB 마이그레이션: `ALTER TABLE plan.product_info ADD COLUMN IF NOT EXISTS sales_note TEXT;`
+  - step2_load.py: INSERT/UPSERT 쿼리에 `sales_note` 매핑 추가
+  - VIEW: 화면 표시 (필요 시)
+
+### 5. VIEW 날짜 필터 버그 — 수정 완료 ✅
+- **증상**: "전체보기" 클릭 후 날짜 설정 시 필터 결과 나오지 않음
+- **원인**: `showAll=true` 상태가 날짜 input 변경 시에도 유지
+- **수정**: `dateField`, `dateFrom`, `dateTo` onChange에 `setShowAll(false)` 추가
+- **파일**: `AXIS-VIEW/app/src/pages/qr/QrManagementPage.tsx`

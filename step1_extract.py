@@ -39,49 +39,50 @@ HEADER_ROW = 2  # 0-indexed (Excel 3번째 행이 헤더)
 # ── 컬럼 매핑 ───────────────────────────────────────────────
 
 # SCR Excel 한글 컬럼 → ETL 영문 필드
+# SCR-Schedule config.py 기준 정확한 컬럼명 사용 (계획일 = 실제 일정관리 기준)
 COLUMN_MAPPING = {
     "S/N": "serial_number",
-    "모델": "model_name",
-    "오더번호": "order_no",
+    "Model": "model_name",
+    "판매오더": "order_no",
     "고객사": "customer",
     "제품번호": "product_code",
     "라인": "line",
-    "기구업체": "mech_partner",
-    "전장업체": "elec_partner",
-    "기구시작": "mech_start",
-    "기구종료": "mech_end",
-    "전장시작": "elec_start",
-    "전장종료": "elec_end",
-    "가압시작": "pressure_test",
-    "자주검사": "self_inspect",
-    "공정시작": "process_inspect",
-    "마무리시작": "finishing_start",
-    "출하": "planned_finish",
+    "기구외주": "mech_partner",
+    "전장외주": "elec_partner",
+    "기구계획시작일": "mech_start",
+    "기구계획종료일": "mech_end",
+    "전장계획시작일": "elec_start",
+    "전장계획종료일": "elec_end",
+    "가압계획시작일": "pressure_test",
+    "가동검사계획시작일": "self_inspect",
+    "TEST계획시작일": "process_inspect",
+    "마무리계획시작일": "finishing_start",
+    "출고계획일": "planned_finish",
 }
 
-# 실제 Excel 헤더명 대체 검색어 (SCR-Schedule config.py 기준)
-# COLUMN_MAPPING key가 매칭 안 될 때 대체 검색어 사용
+# 대체 검색어 (Excel 헤더 변경/약자 사용 시 fallback)
 COLUMN_ALIASES = {
-    "모델":     ["Model", "모델명"],
-    "오더번호":  ["판매오더"],
-    "기구업체":  ["기구외주"],
-    "전장업체":  ["전장외주"],
-    "기구시작":  ["기구계획시작일"],
-    "기구종료":  ["기구계획종료일"],
-    "전장시작":  ["전장계획시작일"],
-    "전장종료":  ["전장계획종료일"],
-    "가압시작":  ["가압계획시작일"],
-    "자주검사":  ["가동검사계획시작일"],
-    "공정시작":  ["TEST계획시작일", "TEST계획"],
-    "마무리시작": ["마무리계획시작일"],
-    "출하":     ["출고계획일"],      # U열 출고계획일 확인 완료 (2026-03-09)
+    "Model":           ["모델", "모델명"],
+    "판매오더":         ["오더번호"],
+    "기구외주":         ["기구업체"],
+    "전장외주":         ["전장업체"],
+    "기구계획시작일":    ["기구시작"],
+    "기구계획종료일":    ["기구종료"],
+    "전장계획시작일":    ["전장시작"],
+    "전장계획종료일":    ["전장종료"],
+    "가압계획시작일":    ["가압시작"],
+    "가동검사계획시작일": ["자주검사"],
+    "TEST계획시작일":    ["TEST계획", "공정시작"],
+    "마무리계획시작일":  ["마무리시작"],
+    "출고계획일":       ["출하"],
 }
 
 # 추가 컬럼: 이름 기반 탐색 + 고정 인덱스 fallback
 EXTRA_COLUMNS = {
     "module_outsourcing": {"name": "모듈외주",       "index": 40},
-    "semi_product_start": {"name": "반제품시작",     "index": 41},
+    "semi_product_start": {"name": "모듈계획시작일",   "index": 41},
     "finishing_plan_end": {"name": "마무리계획종료일", "index": 72},
+    "sales_note":         {"name": "특이사항(영업)",  "index": 87},  # CJ열
 }
 
 
