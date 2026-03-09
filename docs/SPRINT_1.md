@@ -213,8 +213,10 @@ python etl_main.py --all
 > 원인: ETL 실행 후 DB 적재 데이터 검증 시 발견
 
 ### 증상
-- **모델명(model)**: Excel 원본값과 다르게 적재됨 (예: 숫자 모델명 `2100` → `2100.0`)
-- **elec_start, elec_end, pi_start, qi_start**: 값 누락 또는 잘못된 값 적재
+- **모델명(model)**: Excel F열 "Model" 약자 저장 확인 (예: Dragon LE → DRG S). 코드 버그 아닌 Excel 데이터 자체가 약자
+- **elec_start, elec_end**: 값 누락 — Excel 헤더 줄바꿈 매칭 실패
+- **qi_start**: 값 누락 — Excel 헤더 "TEST계획시작일" ↔ COLUMN_MAPPING "공정시작" 불일치
+- **전체**: 텍스트 필드에 날짜 포맷 함수 적용 → float 소수점 등 변환 오류
 
 ### 원인 분석
 
@@ -227,6 +229,11 @@ python etl_main.py --all
 - Excel 헤더에 셀 내 줄바꿈 포함 시 (예: "전장\n시작") 매칭 실패
 - "전장시작"으로 검색해도 "전장\n시작" 컬럼을 찾지 못함
 - 매칭 실패 → col_map에 미등록 → 해당 필드 데이터 누락
+
+**3) COLUMN_MAPPING ↔ 실제 Excel 헤더 불일치**
+- COLUMN_MAPPING이 대시보드 표시명 사용, 실제 Excel 헤더명과 다름
+- "공정시작" → 실제 "TEST계획시작일" (BN열), "모델" → 실제 "Model" (F열)
+- SCR-Schedule config.py에서 실제 헤더명 확인 후 COLUMN_ALIASES 추가로 해결
 
 ### 수정 내용
 
@@ -278,14 +285,48 @@ for eng_key, df_col in col_map.items():
 - `EXTRA_DATE_FIELDS = {"semi_product_start", "finishing_plan_end"}` 분기 추가
 - 날짜 필드만 date 포맷, 나머지는 `_format_text_value()` 적용
 
+**6) COLUMN_ALIASES 추가 — 실제 Excel 헤더명 대체 검색**
+```python
+COLUMN_ALIASES = {
+    "모델":     ["Model", "모델명"],
+    "오더번호":  ["판매오더"],
+    "기구업체":  ["기구외주"],
+    "전장업체":  ["전장외주"],
+    "기구시작":  ["기구계획시작일"],
+    "기구종료":  ["기구계획종료일"],
+    "전장시작":  ["전장계획시작일"],
+    "전장종료":  ["전장계획종료일"],
+    "가압시작":  ["가압계획시작일"],
+    "자주검사":  ["가동검사계획시작일"],
+    "공정시작":  ["TEST계획시작일", "TEST계획"],   # BN열
+    "마무리시작": ["마무리계획시작일"],
+    "출하":     ["출고계획일"],                    # U열
+}
+```
+- SCR-Schedule config.py 기준 실제 헤더명 확인 후 적용
+- 검색: `candidates = [kor_key] + COLUMN_ALIASES.get(kor_key, [])` 로 매칭 범위 확장
+- 매칭 실패 시 Warning 로그 출력
+
 ### 수정 파일
 
 | 파일 | 수정 내용 |
 |------|----------|
-| `step1_extract.py` | `_find_column()` 정규화, `DATE_FIELDS` 분리, `_format_text_value()` 추가 |
+| `step1_extract.py` | `_find_column()` 정규화, `DATE_FIELDS` 분리, `_format_text_value()` 추가, `COLUMN_ALIASES` 추가, EXTRA_COLUMNS 분기 |
+
+### 확인된 컬럼 위치 (2026-03-09)
+
+| ETL 필드 | Excel 열 | Excel 헤더 | 상태 |
+|----------|---------|-----------|------|
+| model_name | F열 | Model | ✅ 약자 저장 확인 (풀네임 필요 시 매핑 테이블 별도 추가) |
+| process_inspect → qi_start | BN열 | TEST계획시작일 | ✅ COLUMN_ALIASES로 매칭 |
+| planned_finish → ship_plan_date | U열 | 출고계획일 | ✅ 확인 완료 |
 
 ### 검증
-- [ ] 모델명 원본 일치 확인 (Excel ↔ DB)
+- [ ] 모델명: Excel F열 약자 그대로 DB 적재 확인
 - [ ] elec_start, elec_end 날짜 정상 적재 확인
-- [ ] pi_start, qi_start 날짜 정상 적재 확인
+- [ ] qi_start (TEST계획시작일 BN열) 날짜 정상 적재 확인
+- [ ] ship_plan_date (출고계획일 U열) 날짜 정상 적재 확인
 - [ ] 기존 정상 필드 (mech_start, S/N 등) 영향 없음 확인
+
+### 미해결 (Backlog)
+- **모델명 풀네임**: Excel F열에 약자 저장 (DRG S 등). 풀네임 필요 시 약자↔풀네임 매핑 테이블 또는 별도 컬럼 추가 필요

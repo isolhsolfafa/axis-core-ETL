@@ -59,6 +59,24 @@ COLUMN_MAPPING = {
     "출하": "planned_finish",
 }
 
+# 실제 Excel 헤더명 대체 검색어 (SCR-Schedule config.py 기준)
+# COLUMN_MAPPING key가 매칭 안 될 때 대체 검색어 사용
+COLUMN_ALIASES = {
+    "모델":     ["Model", "모델명"],
+    "오더번호":  ["판매오더"],
+    "기구업체":  ["기구외주"],
+    "전장업체":  ["전장외주"],
+    "기구시작":  ["기구계획시작일"],
+    "기구종료":  ["기구계획종료일"],
+    "전장시작":  ["전장계획시작일"],
+    "전장종료":  ["전장계획종료일"],
+    "가압시작":  ["가압계획시작일"],
+    "자주검사":  ["가동검사계획시작일"],
+    "공정시작":  ["TEST계획시작일", "TEST계획"],
+    "마무리시작": ["마무리계획시작일"],
+    "출하":     ["출고계획일"],      # U열 출고계획일 확인 완료 (2026-03-09)
+}
+
 # 추가 컬럼: 이름 기반 탐색 + 고정 인덱스 fallback
 EXTRA_COLUMNS = {
     "module_outsourcing": {"name": "모듈외주",       "index": 40},
@@ -360,11 +378,15 @@ def extract_from_teams_excel():
         extra_series[field_key] = series
 
     # 컬럼명 → DataFrame 컬럼 매핑 (한글 → 영문)
+    # COLUMN_ALIASES로 실제 Excel 헤더명까지 검색 범위 확장
     col_map = {}
     for kor_key, eng_key in COLUMN_MAPPING.items():
-        matched_col = _find_column(df, [kor_key])
+        candidates = [kor_key] + COLUMN_ALIASES.get(kor_key, [])
+        matched_col = _find_column(df, candidates)
         if matched_col is not None:
             col_map[eng_key] = matched_col
+        else:
+            print(f"  [Warning] '{kor_key}' ({eng_key}) 컬럼 매칭 실패 — 후보: {candidates}")
 
     # 행별 변환 + S/N split
     converted = []
