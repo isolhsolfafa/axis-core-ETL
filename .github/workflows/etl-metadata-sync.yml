@@ -22,9 +22,10 @@ on:
       mode:
         description: '실행 모드'
         required: true
-        default: 'all'
+        default: 'auto'
         type: choice
         options:
+          - auto
           - all
           - date-range
       start_date:
@@ -71,14 +72,17 @@ jobs:
           FALLBACK_BASE_PATH: ${{ secrets.FALLBACK_BASE_PATH }}
         run: |
           if [ "${{ github.event_name }}" = "schedule" ]; then
-            echo "⏰ 주간 자동 동기화 (전체)"
-            python etl_main.py --all
+            echo "⏰ 주간 자동 동기화 (반기 자동 필터)"
+            python etl_main.py
           elif [ "${{ inputs.mode }}" = "date-range" ]; then
             echo "📅 날짜 범위: ${{ inputs.start_date }} ~ ${{ inputs.end_date }}"
             python etl_main.py --start ${{ inputs.start_date }} --end ${{ inputs.end_date }}
-          else
+          elif [ "${{ inputs.mode }}" = "all" ]; then
             echo "🔄 전체 동기화"
             python etl_main.py --all
+          else
+            echo "📅 반기 자동 필터"
+            python etl_main.py
           fi
 
       - name: Upload ETL results

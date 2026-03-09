@@ -19,6 +19,7 @@ DB 스키마:
   process_inspect  → qi_start (QI 공정검사)
   finishing_start  → si_start (SI 마무리검사)
   planned_finish   → ship_plan_date (출하계획일)
+  finishing_plan_end → finishing_plan_end (마무리계획종료일)
 """
 
 import os
@@ -44,9 +45,9 @@ def generate_qr_doc_id(serial_number):
 
 def load_to_postgres(metadata_list, db_url=None):
     """
-    Staging DB (PostgreSQL)에 적재
-    1) plan.product_info INSERT
-    2) public.qr_registry INSERT
+    Staging DB (PostgreSQL)에 UPSERT 적재
+    1) plan.product_info UPSERT (ON CONFLICT DO UPDATE)
+    2) public.qr_registry INSERT (신규 S/N만)
 
     Args:
         metadata_list: step1에서 추출한 metadata 리스트
@@ -64,53 +65,12 @@ def load_to_postgres(metadata_list, db_url=None):
     results = []
     for item in metadata_list:
         sn = item['serial_number']
-
-        # 중복 체크 (qr_registry 기준)
-        cursor.execute("SELECT id, qr_doc_id FROM public.qr_registry WHERE serial_number = %s", (sn,))
-        existing = cursor.fetchone()
-        if existing and existing[1]:
-            print(f"  [Skip] {sn} → 이미 존재 (qr_doc_id: {existing[1]})")
-            results.append({
-                'id': existing[0],
-                'serial_number': sn,
-                'qr_doc_id': existing[1],
-                'model_name': item['model_name'],
-                'product_code': item.get('product_code', ''),
-                'status': 'skipped',
-            })
-            continue
+        mech_start = item.get('mech_start') or None
 
         try:
-            qr_doc_id = generate_qr_doc_id(sn)
-            mech_start = item.get('mech_start') or None
-
-            # 1) plan.product_info INSERT
-            cursor.execute('''
-                INSERT INTO plan.product_info (
-                    serial_number, model,
-                    title_number, product_code, sales_order,
-                    customer, line, quantity,
-                    mech_partner, elec_partner, module_outsourcing,
-                    prod_date,
-                    mech_start, mech_end,
-                    elec_start, elec_end,
-                    module_start,
-                    pi_start, qi_start, si_start,
-                    ship_plan_date
-                ) VALUES (
-                    %s, %s,
-                    %s, %s, %s,
-                    %s, %s, %s,
-                    %s, %s, %s,
-                    %s,
-                    %s, %s,
-                    %s, %s,
-                    %s,
-                    %s, %s, %s,
-                    %s
-                )
-                RETURNING id
-            ''', (
+            # 1) plan.product_info UPSERT
+            # WHERE 절: 실제 변경된 경우만 UPDATE (동일 데이터 재실행 시 "동일"로 분류)
+            params = (
                 sn, item['model_name'],
                 item.get('title_number', ''),
                 item.get('product_code', ''),
@@ -131,38 +91,136 @@ def load_to_postgres(metadata_list, db_url=None):
                 item.get('process_inspect') or None,
                 item.get('finishing_start') or None,
                 item.get('planned_finish') or None,
-            ))
-            product_id = cursor.fetchone()[0]
-
-            # 2) public.qr_registry INSERT (QR 매핑)
+                item.get('finishing_plan_end') or None,
+            )
             cursor.execute('''
-                INSERT INTO public.qr_registry (qr_doc_id, serial_number, status)
-                VALUES (%s, %s, 'active')
-                RETURNING id
-            ''', (qr_doc_id, sn))
-            qr_id = cursor.fetchone()[0]
+                INSERT INTO plan.product_info (
+                    serial_number, model,
+                    title_number, product_code, sales_order,
+                    customer, line, quantity,
+                    mech_partner, elec_partner, module_outsourcing,
+                    prod_date,
+                    mech_start, mech_end,
+                    elec_start, elec_end,
+                    module_start,
+                    pi_start, qi_start, si_start,
+                    ship_plan_date,
+                    finishing_plan_end
+                ) VALUES (
+                    %s, %s,
+                    %s, %s, %s,
+                    %s, %s, %s,
+                    %s, %s, %s,
+                    %s,
+                    %s, %s,
+                    %s, %s,
+                    %s,
+                    %s, %s, %s,
+                    %s,
+                    %s
+                )
+                ON CONFLICT (serial_number)
+                DO UPDATE SET
+                    model = EXCLUDED.model,
+                    sales_order = EXCLUDED.sales_order,
+                    customer = EXCLUDED.customer,
+                    mech_partner = EXCLUDED.mech_partner,
+                    elec_partner = EXCLUDED.elec_partner,
+                    module_outsourcing = EXCLUDED.module_outsourcing,
+                    mech_start = EXCLUDED.mech_start,
+                    mech_end = EXCLUDED.mech_end,
+                    elec_start = EXCLUDED.elec_start,
+                    elec_end = EXCLUDED.elec_end,
+                    module_start = EXCLUDED.module_start,
+                    pi_start = EXCLUDED.pi_start,
+                    qi_start = EXCLUDED.qi_start,
+                    si_start = EXCLUDED.si_start,
+                    ship_plan_date = EXCLUDED.ship_plan_date,
+                    finishing_plan_end = EXCLUDED.finishing_plan_end,
+                    prod_date = EXCLUDED.prod_date,
+                    updated_at = NOW()
+                WHERE
+                    plan.product_info.model IS DISTINCT FROM EXCLUDED.model
+                    OR plan.product_info.sales_order IS DISTINCT FROM EXCLUDED.sales_order
+                    OR plan.product_info.customer IS DISTINCT FROM EXCLUDED.customer
+                    OR plan.product_info.mech_partner IS DISTINCT FROM EXCLUDED.mech_partner
+                    OR plan.product_info.elec_partner IS DISTINCT FROM EXCLUDED.elec_partner
+                    OR plan.product_info.module_outsourcing IS DISTINCT FROM EXCLUDED.module_outsourcing
+                    OR plan.product_info.mech_start IS DISTINCT FROM EXCLUDED.mech_start
+                    OR plan.product_info.mech_end IS DISTINCT FROM EXCLUDED.mech_end
+                    OR plan.product_info.elec_start IS DISTINCT FROM EXCLUDED.elec_start
+                    OR plan.product_info.elec_end IS DISTINCT FROM EXCLUDED.elec_end
+                    OR plan.product_info.module_start IS DISTINCT FROM EXCLUDED.module_start
+                    OR plan.product_info.pi_start IS DISTINCT FROM EXCLUDED.pi_start
+                    OR plan.product_info.qi_start IS DISTINCT FROM EXCLUDED.qi_start
+                    OR plan.product_info.si_start IS DISTINCT FROM EXCLUDED.si_start
+                    OR plan.product_info.ship_plan_date IS DISTINCT FROM EXCLUDED.ship_plan_date
+                    OR plan.product_info.finishing_plan_end IS DISTINCT FROM EXCLUDED.finishing_plan_end
+                    OR plan.product_info.prod_date IS DISTINCT FROM EXCLUDED.prod_date
+                RETURNING id, (xmax = 0) AS is_insert
+            ''', params)
+            row = cursor.fetchone()
+
+            if row is None:
+                # CONFLICT 발생했으나 WHERE 조건 불일치 → 데이터 동일 (변경 없음)
+                cursor.execute(
+                    "SELECT id FROM plan.product_info WHERE serial_number = %s", (sn,)
+                )
+                product_id = cursor.fetchone()[0]
+                cursor.execute(
+                    "SELECT qr_doc_id FROM public.qr_registry WHERE serial_number = %s", (sn,)
+                )
+                qr_row = cursor.fetchone()
+                qr_doc_id = qr_row[0] if qr_row else generate_qr_doc_id(sn)
+                status = 'unchanged'
+                print(f"  [⏭️ 동일] {sn}")
+            elif row[1]:
+                # is_insert = true → 신규
+                product_id = row[0]
+                qr_doc_id = generate_qr_doc_id(sn)
+                cursor.execute('''
+                    INSERT INTO public.qr_registry (qr_doc_id, serial_number, status)
+                    VALUES (%s, %s, 'active')
+                    RETURNING id
+                ''', (qr_doc_id, sn))
+                qr_id = cursor.fetchone()[0]
+                status = 'inserted'
+                print(f"  [✅ 신규] {sn} → {qr_doc_id} (plan:{product_id}, qr:{qr_id})")
+            else:
+                # is_insert = false → 실제 변경됨
+                product_id = row[0]
+                cursor.execute(
+                    "SELECT qr_doc_id FROM public.qr_registry WHERE serial_number = %s", (sn,)
+                )
+                qr_row = cursor.fetchone()
+                qr_doc_id = qr_row[0] if qr_row else generate_qr_doc_id(sn)
+                status = 'updated'
+                print(f"  [🔄 변경] {sn} (plan:{product_id})")
 
             results.append({
                 'id': product_id,
-                'qr_id': qr_id,
                 'serial_number': sn,
                 'qr_doc_id': qr_doc_id,
                 'model_name': item['model_name'],
                 'product_code': item.get('product_code', ''),
-                'status': 'inserted',
+                'status': status,
             })
-            print(f"  [Load] {sn} → {qr_doc_id} (plan.product_info:{product_id}, qr_registry:{qr_id})")
 
         except Exception as e:
             conn.rollback()
-            print(f"  [Error] {sn}: {e}")
+            print(f"  [❌ Error] {sn}: {e}")
             conn = psycopg2.connect(db_url)
             cursor = conn.cursor()
             cursor.execute("SET timezone = 'Asia/Seoul'")
 
     conn.commit()
     conn.close()
-    print(f"[Load] PostgreSQL 적재 완료: {len(results)}건")
+
+    # 결과 요약 출력
+    inserted = sum(1 for r in results if r['status'] == 'inserted')
+    updated = sum(1 for r in results if r['status'] == 'updated')
+    unchanged = sum(1 for r in results if r['status'] == 'unchanged')
+    print(f"[Load] PostgreSQL 적재 완료: 신규 {inserted}건, 변경 {updated}건, 동일 {unchanged}건")
     return results
 
 
