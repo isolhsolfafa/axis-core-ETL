@@ -1,0 +1,7 @@
+# ETL Pipeline Dependencies
+psycopg2-binary>=2.9
+openpyxl>=3.1
+pandas>=2.0
+msal>=1.28
+requests>=2.31
+python-dotenv>=1.0

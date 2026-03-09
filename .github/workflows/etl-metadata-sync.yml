@@ -1,0 +1,91 @@
+# ETL Metadata Sync — Teams Excel → PostgreSQL (Graph API)
+#
+# 트리거:
+#   - 수동 실행 (workflow_dispatch) — 날짜 범위 지정 가능
+#   - 매주 월요일 09:00 KST (00:00 UTC) — 자동 전체 동기화
+#
+# 필요 Secrets:
+#   DATABASE_URL        — PostgreSQL 접속 URL
+#   TEAMS_TENANT_ID     — Azure AD Tenant ID
+#   TEAMS_CLIENT_ID     — Azure AD App Client ID
+#   TEAMS_CLIENT_SECRET — Azure AD App Client Secret
+#   SOURCE_DOC_ID       — OneDrive 파일 ID (Primary)
+#   SOURCE_USER_EMAIL   — OneDrive 파일 소유자 이메일 (Optional)
+#   FALLBACK_BASE_PATH  — OneDrive 폴더 경로 (Optional, Fallback)
+
+name: ETL Metadata Sync
+
+on:
+  # 수동 트리거 (GitHub UI에서 "Run workflow" 버튼)
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: '실행 모드'
+        required: true
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - date-range
+      start_date:
+        description: '시작 날짜 (YYYY-MM-DD) — date-range 모드 전용'
+        required: false
+        type: string
+      end_date:
+        description: '종료 날짜 (YYYY-MM-DD) — date-range 모드 전용'
+        required: false
+        type: string
+
+  # 주간 자동 실행: 매주 월요일 09:00 KST (00:00 UTC)
+  schedule:
+    - cron: '0 0 * * 1'
+
+jobs:
+  etl-sync:
+    name: Run ETL Pipeline
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          cache: 'pip'
+          cache-dependency-path: 'requirements.txt'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run ETL Pipeline
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          TEAMS_TENANT_ID: ${{ secrets.TEAMS_TENANT_ID }}
+          TEAMS_CLIENT_ID: ${{ secrets.TEAMS_CLIENT_ID }}
+          TEAMS_CLIENT_SECRET: ${{ secrets.TEAMS_CLIENT_SECRET }}
+          SOURCE_DOC_ID: ${{ secrets.SOURCE_DOC_ID }}
+          SOURCE_USER_EMAIL: ${{ secrets.SOURCE_USER_EMAIL }}
+          FALLBACK_BASE_PATH: ${{ secrets.FALLBACK_BASE_PATH }}
+        run: |
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            echo "⏰ 주간 자동 동기화 (전체)"
+            python etl_main.py --all
+          elif [ "${{ inputs.mode }}" = "date-range" ]; then
+            echo "📅 날짜 범위: ${{ inputs.start_date }} ~ ${{ inputs.end_date }}"
+            python etl_main.py --start ${{ inputs.start_date }} --end ${{ inputs.end_date }}
+          else
+            echo "🔄 전체 동기화"
+            python etl_main.py --all
+          fi
+
+      - name: Upload ETL results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: etl-result-${{ github.run_number }}
+          path: output/etl_result.json
+          retention-days: 30
+          if-no-files-found: ignore
