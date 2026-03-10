@@ -17,7 +17,7 @@ GitHub Actions cron으로 매주 월요일 자동 실행.
 CORE-ETL/
 ├── etl_main.py              # 오케스트레이터 (CLI: --date, --start/--end, --all)
 ├── step1_extract.py         # Graph API Excel 다운로드 + 파싱
-├── step2_load.py            # PostgreSQL 적재 (plan.product_info + public.qr_registry)
+├── step2_load.py            # PostgreSQL 적재 (plan.product_info + public.qr_registry + etl.change_log)
 ├── requirements.txt         # 의존성
 ├── .env                     # 로컬 환경변수 (git 제외)
 ├── .gitignore
@@ -25,7 +25,8 @@ CORE-ETL/
 ├── PROGRESS.md              # 스프린트 이력
 ├── BACKLOG.md               # 백로그 + GitHub Secrets 목록
 ├── docs/
-│   ├── SPRINT_1.md          # 현재 스프린트
+│   ├── SPRINT_1.md          # Sprint 1
+│   ├── SPRINT_2.md          # Sprint 2 (현재)
 │   └── SPRINT_COMPLETION_TEMPLATE.md
 └── .github/workflows/
     └── etl-metadata-sync.yml  # GitHub Actions
@@ -40,10 +41,15 @@ plan.product_info
   - module_start, pi_start, qi_start, si_start
   - ship_plan_date, prod_date
   - finishing_plan_end (마무리계획종료일 — 협력사 평가 + 실적관리 기준)
+  - actual_ship_date (출고일자 실적 — Sprint 2)
   - updated_at (UPSERT 변경 추적)
 
 public.qr_registry
-  - qr_doc_id (DOC_{serial_number}), serial_number, status ('active')
+  - qr_doc_id (DOC_{serial_number}), serial_number, status ('active' | 'shipped')
+
+etl.change_log (Sprint 2)
+  - id, serial_number, field_name, old_value, new_value, changed_at
+  - 추적 필드: sales_order, ship_plan_date, mech_start, mech_partner, elec_partner
 ```
 
 ## 환경변수 (필수)
@@ -63,8 +69,9 @@ FALLBACK_BASE_PATH    — OneDrive 폴더 경로 (생산관리팀/1.정기업무
 
 ## 컬럼 매핑
 - COLUMN_MAPPING: 17개 (한글 → 영문)
-- EXTRA_COLUMNS: 3개 (module_outsourcing, semi_product_start, finishing_plan_end)
+- EXTRA_COLUMNS: 5개 (module_outsourcing, semi_product_start, actual_ship_date, finishing_plan_end, sales_note)
 - finishing_plan_end: 컬럼명 "마무리계획종료일"로 먼저 탐색, 실패 시 BU열(index 72) fallback
+- actual_ship_date: "출고" 컬럼 (R열, index 17) — 실적 출고일
 
 ## ETL 실행 방법
 ```bash

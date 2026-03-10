@@ -1,6 +1,6 @@
 # CORE-ETL 백로그
 
-> 마지막 업데이트: 2026-03-09
+> 마지막 업데이트: 2026-03-10
 
 ---
 
@@ -10,16 +10,15 @@
 |--------|------|------|
 | 0 | 초기 구성 — OPS에서 분리, Graph API 통합, GitHub Actions | ✅ 완료 |
 | 1 | UPSERT 전환 + 컬럼 매핑 교정 + 데이터 누락 해결 (39→158건) | ✅ 완료 |
+| 2 | 변경 이력 추적 + actual_ship_date + VIEW 연동 | 🔄 진행 중 |
 
 ---
 
 ## 백로그 (우선순위 순)
 
 ### 1. 변경 이력 추적 + VIEW 대시보드 — Sprint 2 진행 중
-- **내용**: UPSERT 시 핵심 5개 필드 변경 이력을 `etl.change_log` 테이블에 기록 + VIEW에 "ETL 변경 이력" 페이지 추가
-- **추적 필드**: sales_order(판매오더), ship_plan_date(출하예정), mech_start(기구시작), mech_partner(기구외주), elec_partner(전장외주)
-- **배경**: 생산관리에서 출하 일정 변동 시 제조시작일 + 배정 협력사가 빈번하게 변경됨 → 변동 추적 필수
-- **UPSERT 비교는 기존 17개 필드 전부 유지**, change_log 기록만 5개 필드 한정
+- **ETL 코드 구현 완료** (Task 1~3): change_log 기록 + actual_ship_date + shipped 처리
+- **남은 작업**: Task 4 (OPS BE 엔드포인트) → Task 5 (VIEW API 연동)
 - **상세**: `docs/SPRINT_2.md` 참고
 - **시기**: Sprint 2 (2026-03-10~)
 

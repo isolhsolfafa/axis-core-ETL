@@ -4,7 +4,7 @@
 GST 제조 현장 생산 메타데이터 ETL 파이프라인 — Teams Excel(SCR 생산현황) → PostgreSQL 자동 적재.
 AXIS-OPS DB에 직접 적재하며, GitHub Actions cron으로 주기적 자동 실행.
 
-> **현재 버전**: v0.1.0 (Sprint 1, 2026-03-09)
+> **현재 버전**: v0.2.0 (Sprint 2, 2026-03-10)
 > **저장소**: axis-core-etl (AXIS-OPS에서 분리)
 > **DB 대상**: AXIS-OPS Railway PostgreSQL (plan.product_info, public.qr_registry)
 
@@ -101,3 +101,34 @@ INSERT → UPSERT 전환, finishing_plan_end 적재, 컬럼 매핑 버그 수정
 ### 미해결
 - GBWS-6834: `module_start`에 "5083 모듈" 텍스트 → DATE 타입 에러 (현장 확인 필요, BACKLOG #6)
 - 모델명 풀네임: Excel F열에 약자 저장 (풀네임 필요 시 매핑 테이블 별도 추가)
+
+---
+
+## Sprint 2: 변경 이력 추적 + VIEW 연동 (2026-03-10~) 🔄 진행 중
+
+### 목표
+UPSERT 시 핵심 5개 필드 변경 이력을 DB에 기록 + actual_ship_date 적재 + shipped 상태 처리.
+
+### 완료 내역
+
+**Task 1: DB 스키마 ✅**
+- `etl` 스키마 생성 + `etl.change_log` 테이블 + 인덱스 3개
+- `plan.product_info.actual_ship_date` DATE 컬럼 추가
+
+**Task 2: 변경 이력 기록 로직 ✅**
+- `TRACKED_FIELDS`: 5개 필드 (sales_order, ship_plan_date, mech_start, mech_partner, elec_partner)
+- `_record_changes()`: UPSERT 직전 SELECT → 비교 → etl.change_log INSERT
+- `_normalize_value()`: NULL/빈문자열 정규화
+- SAVEPOINT 범위 내 실행 → 에러 시 같이 롤백
+
+**Task 3: actual_ship_date + shipped 처리 ✅**
+- step1: EXTRA_COLUMNS에 `actual_ship_date` 추가 (R열, "출고")
+- step2: UPSERT에 actual_ship_date 추가 (INSERT/UPDATE/WHERE — 18개 필드)
+- shipped: `actual_ship_date <= today - 1일` → `qr_registry.status = 'shipped'`
+
+**Task 5~6: VIEW 선행 개발 ✅** (Sprint 2 이전 완료)
+
+### 남은 작업
+- Task 4: OPS BE `/api/admin/etl/changes` 엔드포인트 (대기 중)
+- Task 5: VIEW Mock → API 연동 (Task 4 완료 후)
+- Workflow 테스트 실행 후 결과 확인
