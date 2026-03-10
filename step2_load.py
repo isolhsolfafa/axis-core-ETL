@@ -65,29 +65,44 @@ def _normalize_value(val):
     return str(val)
 
 
-def _record_changes(cursor, sn, item):
+def _prefetch_tracked_values(cursor, serial_numbers):
     """
-    UPSERT 직전에 기존 값 조회 → 5개 추적 필드 비교 → change_log INSERT
-    신규 레코드(기존 데이터 없음)는 변경 기록 없이 스킵.
+    변경 추적 대상 5개 필드의 기존 값을 일괄 조회 → dict 반환
+    레코드당 SELECT 제거 → 1회 쿼리로 전체 캐시
+    Returns: {serial_number: {db_col: value, ...}, ...}
+    """
+    if not serial_numbers:
+        return {}
+
+    # IN 절로 일괄 조회
+    placeholders = ','.join(['%s'] * len(serial_numbers))
+    cursor.execute(f"""
+        SELECT serial_number, sales_order, ship_plan_date, mech_start, mech_partner, elec_partner
+        FROM plan.product_info
+        WHERE serial_number IN ({placeholders})
+    """, serial_numbers)
+
+    cache = {}
+    for row in cursor.fetchall():
+        cache[row[0]] = {
+            'sales_order':    row[1],
+            'ship_plan_date': str(row[2]) if row[2] else None,
+            'mech_start':     str(row[3]) if row[3] else None,
+            'mech_partner':   row[4],
+            'elec_partner':   row[5],
+        }
+    return cache
+
+
+def _record_changes(cursor, sn, item, existing_cache):
+    """
+    캐시된 기존 값과 5개 추적 필드 비교 → change_log INSERT
+    신규 레코드(캐시에 없음)는 변경 기록 없이 스킵.
     Returns: 기록된 변경 건수
     """
-    cursor.execute("""
-        SELECT sales_order, ship_plan_date, mech_start, mech_partner, elec_partner
-        FROM plan.product_info
-        WHERE serial_number = %s
-    """, (sn,))
-    existing = cursor.fetchone()
-
-    if not existing:
+    old_values = existing_cache.get(sn)
+    if not old_values:
         return 0  # 신규 레코드 — 변경 이력 없음
-
-    old_values = {
-        'sales_order':    existing[0],
-        'ship_plan_date': str(existing[1]) if existing[1] else None,
-        'mech_start':     str(existing[2]) if existing[2] else None,
-        'mech_partner':   existing[3],
-        'elec_partner':   existing[4],
-    }
 
     change_count = 0
     for etl_key, db_col in TRACKED_FIELDS.items():
@@ -125,6 +140,11 @@ def load_to_postgres(metadata_list, db_url=None):
     cursor = conn.cursor()
     cursor.execute("SET timezone = 'Asia/Seoul'")
 
+    # 변경 추적용 기존 값 일괄 조회 (1회 쿼리)
+    all_sns = [item['serial_number'] for item in metadata_list]
+    existing_cache = _prefetch_tracked_values(cursor, all_sns)
+    print(f"[Load] 변경 추적 대상: 기존 {len(existing_cache)}건 / 전체 {len(all_sns)}건")
+
     results = []
     error_count = 0
     total_changes = 0
@@ -136,8 +156,8 @@ def load_to_postgres(metadata_list, db_url=None):
             # SAVEPOINT로 레코드 단위 롤백 (다른 레코드에 영향 없음)
             cursor.execute("SAVEPOINT sp_record")
 
-            # 0) 변경 이력 기록 (UPSERT 직전)
-            change_count = _record_changes(cursor, sn, item)
+            # 0) 변경 이력 기록 (캐시 기반, UPSERT 직전)
+            change_count = _record_changes(cursor, sn, item, existing_cache)
             total_changes += change_count
 
             # 1) plan.product_info UPSERT
