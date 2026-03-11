@@ -2,7 +2,7 @@
 #
 # 트리거:
 #   - 수동 실행 (workflow_dispatch) — 날짜 범위 지정 가능
-#   - 매주 월요일 09:00 KST (00:00 UTC) — 자동 전체 동기화
+#   - 매일 07/10/13/16시 KST (3시간 간격) — 자동 동기화
 #
 # 필요 Secrets:
 #   DATABASE_URL        — PostgreSQL 접속 URL
@@ -37,9 +37,12 @@ on:
         required: false
         type: string
 
-  # 주간 자동 실행: 매주 월요일 09:00 KST (00:00 UTC)
+  # 매일 07:00 / 10:00 / 13:00 / 16:00 KST (3시간 간격)
   schedule:
-    - cron: '0 0 * * 1'
+    - cron: '0 22 * * *'   # 07:00 KST (전날 22:00 UTC)
+    - cron: '0 1 * * *'    # 10:00 KST
+    - cron: '0 4 * * *'    # 13:00 KST
+    - cron: '0 7 * * *'    # 16:00 KST
 
 jobs:
   etl-sync:
@@ -72,7 +75,7 @@ jobs:
           FALLBACK_BASE_PATH: ${{ secrets.FALLBACK_BASE_PATH }}
         run: |
           if [ "${{ github.event_name }}" = "schedule" ]; then
-            echo "⏰ 주간 자동 동기화 (반기 자동 필터)"
+            echo "⏰ 정기 자동 동기화 (반기 자동 필터)"
             python etl_main.py
           elif [ "${{ inputs.mode }}" = "date-range" ]; then
             echo "📅 날짜 범위: ${{ inputs.start_date }} ~ ${{ inputs.end_date }}"
