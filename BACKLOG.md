@@ -1,6 +1,6 @@
 # CORE-ETL 백로그
 
-> 마지막 업데이트: 2026-03-10
+> 마지막 업데이트: 2026-03-14
 
 ---
 
@@ -10,17 +10,25 @@
 |--------|------|------|
 | 0 | 초기 구성 — OPS에서 분리, Graph API 통합, GitHub Actions | ✅ 완료 |
 | 1 | UPSERT 전환 + 컬럼 매핑 교정 + 데이터 누락 해결 (39→158건) | ✅ 완료 |
-| 2 | 변경 이력 추적 + actual_ship_date + VIEW 연동 | 🔄 진행 중 |
+| 2 | 변경 이력 추적 + actual_ship_date + VIEW 연동 (Task 1~6) | ✅ 완료 |
+| 2-A | pi_start(가압시작) 변경이력 추적 추가 (TRACKED_FIELDS 5→6개) | ✅ 완료 |
 
 ---
 
 ## 백로그 (우선순위 순)
 
-### 1. 변경 이력 추적 + VIEW 대시보드 — Sprint 2 진행 중
-- **ETL 코드 구현 완료** (Task 1~3): change_log 기록 + actual_ship_date + shipped 처리
-- **남은 작업**: Task 4 (OPS BE 엔드포인트) → Task 5 (VIEW API 연동)
+### ~~1. 변경 이력 추적 + VIEW 대시보드~~ — ✅ Sprint 2 완료 (2026-03-11)
+- Task 1~3: ETL change_log + actual_ship_date + shipped 처리 ✅
+- Task 4: OPS BE `/api/admin/etl/changes` 엔드포인트 ✅
+- Task 5: VIEW Mock→API 연동 ✅
+- Task 6: Sidebar 서브메뉴 ✅
 - **상세**: `docs/SPRINT_2.md` 참고
-- **시기**: Sprint 2 (2026-03-10~)
+
+### ~~1-A. pi_start 변경이력 추적~~ — ✅ Sprint 2-A 완료 (2026-03-14)
+- `TRACKED_FIELDS`에 `pressure_test: pi_start` 추가 (5→6개)
+- `_prefetch_tracked_values()` SELECT에 `pi_start` 추가
+- OPS BE `_FIELD_LABELS`에 `pi_start: 가압시작` 추가
+- VIEW FE: FIELD_CONFIG, DATE_FIELDS, KPI 그리드, 차트 수정 (VIEW 별도)
 
 ### 2. 복수 연도 지원
 - **내용**: 2026년 + 2027년 동시 처리 (FALLBACK_BASE_PATH 리스트화)
