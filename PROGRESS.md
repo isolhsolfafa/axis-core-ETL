@@ -4,7 +4,7 @@
 GST 제조 현장 생산 메타데이터 ETL 파이프라인 — Teams Excel(SCR 생산현황) → PostgreSQL 자동 적재.
 AXIS-OPS DB에 직접 적재하며, GitHub Actions cron으로 주기적 자동 실행.
 
-> **현재 버전**: v0.2.1 (Sprint 2-A, 2026-03-14)
+> **현재 버전**: v0.3.0 (Sprint 31A 연동, 2026-03-18)
 > **저장소**: axis-core-etl (AXIS-OPS에서 분리)
 > **DB 대상**: AXIS-OPS Railway PostgreSQL (plan.product_info, public.qr_registry)
 
@@ -159,3 +159,19 @@ ETL 변경 추적 대상에 pi_start(가압시작) 필드 추가. VIEW 변경이
 
 **AXIS-VIEW FE** (별도 진행)
 - `FIELD_CONFIG`, `DATE_FIELDS`, KPI 그리드 6열, kpiCards, 주간 차트 — DESIGN_FIX_SPRINT.md 참고
+
+---
+
+## Sprint 31A 연동: DUAL 모델 Tank QR 자동 생성 (2026-03-18) ✅ 완료
+
+### 목표
+AXIS-OPS Sprint 31A 다모델 지원에 따른 ETL step2_load.py 수정. DUAL 모델 제품 신규 등록 시 L/R Tank QR 자동 생성.
+
+### 변경 내역
+
+**step2_load.py**
+- 신규 제품 INSERT 시 `qr_type='PRODUCT'` 명시
+- DUAL 모델 판단: model_name에 'DUAL' 포함 OR `model_config.always_dual=True` (iVAS)
+- DUAL + `tank_in_mech=False` → L/R Tank QR 2건 생성 (`qr_type='TANK'`, `parent_qr_doc_id` 설정)
+- DRAGON(`tank_in_mech=True`) → Tank QR 미생성 (MECH에서 일괄 처리)
+- `ON CONFLICT (qr_doc_id) DO NOTHING` — 멱등성 보장

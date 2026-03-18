@@ -22,6 +22,11 @@ DB 스키마:
   planned_finish   → ship_plan_date (출하계획일)
   finishing_plan_end → finishing_plan_end (마무리계획종료일)
   actual_ship_date → actual_ship_date (출고일자 실적)
+
+Sprint 31A: DUAL 모델 Tank QR 자동 생성
+  - model_name에 'DUAL' 포함 OR model_config.always_dual=True → L/R Tank QR 생성
+  - tank_in_mech=True (DRAGON) → Tank QR 미생성
+  - qr_registry에 parent_qr_doc_id, qr_type 컬럼 활용
 """
 
 import os
@@ -243,15 +248,57 @@ def _process_single_record(cursor, item, existing_cache):
         qr_row = cursor.fetchone()
         qr_doc_id = qr_row[0] if qr_row else generate_qr_doc_id(sn)
         status = 'unchanged'
-    elif row[1]:
+    elif row[1]:  # is_insert = True (신규 제품)
         product_id = row[0]
         qr_doc_id = generate_qr_doc_id(sn)
+
+        # 제품 QR 생성 (Sprint 31A: qr_type 명시)
         cursor.execute('''
-            INSERT INTO public.qr_registry (qr_doc_id, serial_number, status)
-            VALUES (%s, %s, 'active')
+            INSERT INTO public.qr_registry (qr_doc_id, serial_number, status, qr_type)
+            VALUES (%s, %s, 'active', 'PRODUCT')
             RETURNING id
         ''', (qr_doc_id, sn))
         cursor.fetchone()
+
+        # ★ Sprint 31A: DUAL 모델 → Tank QR 추가 생성
+        model_name = item['model_name']
+        is_dual = 'DUAL' in model_name.upper().split()
+
+        # always_dual 체크 (model_config 조회: iVAS 등)
+        if not is_dual:
+            cursor.execute("""
+                SELECT always_dual FROM model_config
+                WHERE %s ILIKE model_prefix || '%%'
+                ORDER BY LENGTH(model_prefix) DESC
+                LIMIT 1
+            """, (model_name,))
+            mc_row = cursor.fetchone()
+            if mc_row and mc_row[0]:
+                is_dual = True
+
+        # tank_in_mech 모델(DRAGON)은 Tank QR 미생성
+        need_tank_qr = False
+        if is_dual:
+            cursor.execute("""
+                SELECT tank_in_mech FROM model_config
+                WHERE %s ILIKE model_prefix || '%%'
+                ORDER BY LENGTH(model_prefix) DESC
+                LIMIT 1
+            """, (model_name,))
+            mc_row = cursor.fetchone()
+            need_tank_qr = not (mc_row and mc_row[0])
+
+        if need_tank_qr:
+            for suffix in ['-L', '-R']:
+                tank_qr = f"{qr_doc_id}{suffix}"
+                cursor.execute('''
+                    INSERT INTO public.qr_registry
+                        (qr_doc_id, serial_number, status, qr_type, parent_qr_doc_id)
+                    VALUES (%s, %s, 'active', 'TANK', %s)
+                    ON CONFLICT (qr_doc_id) DO NOTHING
+                ''', (tank_qr, sn, qr_doc_id))
+            print(f"  [DUAL] {sn} → Tank QR: {qr_doc_id}-L, {qr_doc_id}-R")
+
         status = 'inserted'
     else:
         product_id = row[0]
