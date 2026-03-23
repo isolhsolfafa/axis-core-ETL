@@ -81,6 +81,7 @@ COLUMN_ALIASES = {
 EXTRA_COLUMNS = {
     "module_outsourcing": {"name": "모듈외주",       "index": 40},
     "semi_product_start": {"name": "모듈계획시작일",   "index": 41},
+    "semi_product_end":   {"name": "모듈계획종료일",   "index": 42},  # AQ열
     "actual_ship_date":   {"name": "출고",           "index": 17},  # R열 — 실제 출고일(실적)
     "finishing_plan_end": {"name": "마무리계획종료일", "index": 72},
     "sales_note":         {"name": "특이사항(영업)",  "index": 87},  # CJ열
@@ -429,7 +430,7 @@ def extract_from_teams_excel():
                 base_item[eng_key] = _format_text_value(val)
 
         # 추가 컬럼 추출 (날짜/텍스트 분기)
-        EXTRA_DATE_FIELDS = {"semi_product_start", "finishing_plan_end", "actual_ship_date"}
+        EXTRA_DATE_FIELDS = {"semi_product_start", "semi_product_end", "finishing_plan_end", "actual_ship_date"}
         for field_key, series in extra_series.items():
             if series is not None:
                 val = series.iloc[df.index.get_loc(idx)]

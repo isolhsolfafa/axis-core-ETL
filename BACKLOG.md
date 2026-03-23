@@ -13,6 +13,7 @@
 | 2 | 변경 이력 추적 + actual_ship_date + VIEW 연동 (Task 1~6) | ✅ 완료 |
 | 2-A | pi_start(가압시작) 변경이력 추적 추가 (TRACKED_FIELDS 5→6개) | ✅ 완료 |
 | 31A연동 | DUAL 모델 Tank QR 자동 생성 (step2_load.py) | ✅ v0.3.0 |
+| 3 | module_end 추가 + VIEW 실적뷰 기준 mech_start→공정종료일 변경 | ✅ v0.4.0 |
 
 ---
 

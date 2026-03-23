@@ -16,6 +16,7 @@ DB 스키마:
   elec_start       → elec_start (EE)
   elec_end         → elec_end (EE)
   semi_product_start → module_start (TM)
+  semi_product_end   → module_end (TM 종료)
   pressure_test    → pi_start (PI 가압검사)
   process_inspect  → qi_start (QI 공정검사)
   finishing_start  → si_start (SI 마무리검사)
@@ -158,6 +159,7 @@ def _process_single_record(cursor, item, existing_cache):
         item.get('elec_start') or None,
         item.get('elec_end') or None,
         item.get('semi_product_start') or None,
+        item.get('semi_product_end') or None,
         item.get('pressure_test') or None,
         item.get('process_inspect') or None,
         item.get('finishing_start') or None,
@@ -174,7 +176,7 @@ def _process_single_record(cursor, item, existing_cache):
             prod_date,
             mech_start, mech_end,
             elec_start, elec_end,
-            module_start,
+            module_start, module_end,
             pi_start, qi_start, si_start,
             ship_plan_date,
             finishing_plan_end,
@@ -187,7 +189,7 @@ def _process_single_record(cursor, item, existing_cache):
             %s,
             %s, %s,
             %s, %s,
-            %s,
+            %s, %s,
             %s, %s, %s,
             %s,
             %s,
@@ -206,6 +208,7 @@ def _process_single_record(cursor, item, existing_cache):
             elec_start = EXCLUDED.elec_start,
             elec_end = EXCLUDED.elec_end,
             module_start = EXCLUDED.module_start,
+            module_end = EXCLUDED.module_end,
             pi_start = EXCLUDED.pi_start,
             qi_start = EXCLUDED.qi_start,
             si_start = EXCLUDED.si_start,
@@ -226,6 +229,7 @@ def _process_single_record(cursor, item, existing_cache):
             OR plan.product_info.elec_start IS DISTINCT FROM EXCLUDED.elec_start
             OR plan.product_info.elec_end IS DISTINCT FROM EXCLUDED.elec_end
             OR plan.product_info.module_start IS DISTINCT FROM EXCLUDED.module_start
+            OR plan.product_info.module_end IS DISTINCT FROM EXCLUDED.module_end
             OR plan.product_info.pi_start IS DISTINCT FROM EXCLUDED.pi_start
             OR plan.product_info.qi_start IS DISTINCT FROM EXCLUDED.qi_start
             OR plan.product_info.si_start IS DISTINCT FROM EXCLUDED.si_start
