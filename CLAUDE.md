@@ -49,7 +49,7 @@ public.qr_registry
 
 etl.change_log (Sprint 2)
   - id, serial_number, field_name, old_value, new_value, changed_at
-  - 추적 필드: sales_order, ship_plan_date, mech_start, mech_partner, elec_partner
+  - 추적 필드: sales_order, ship_plan_date, mech_start, pi_start, mech_partner, elec_partner, finishing_plan_end
 ```
 
 ## 환경변수 (필수)

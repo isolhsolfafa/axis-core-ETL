@@ -4,7 +4,7 @@
 GST 제조 현장 생산 메타데이터 ETL 파이프라인 — Teams Excel(SCR 생산현황) → PostgreSQL 자동 적재.
 AXIS-OPS DB에 직접 적재하며, GitHub Actions cron으로 주기적 자동 실행.
 
-> **현재 버전**: v0.4.0 (module_end 추가, 2026-03-23)
+> **현재 버전**: v0.4.1 (finishing_plan_end 변경이력 추적, 2026-03-24)
 > **저장소**: axis-core-etl (AXIS-OPS에서 분리)
 > **DB 대상**: AXIS-OPS Railway PostgreSQL (plan.product_info, public.qr_registry)
 
@@ -212,3 +212,16 @@ CREATE INDEX IF NOT EXISTS idx_plan_pi_elec_end ON plan.product_info(elec_end);
 - 변경 전: `WHERE p.mech_start >= %s AND p.mech_start < %s`
 - 변경 후: `WHERE (mech_end 범위) OR (elec_end 범위) OR (COALESCE(module_end, module_start) 범위)`
 - `module_end` NULL 과도기 대응: `COALESCE(module_end, module_start)` fallback
+
+---
+
+## Sprint 3-A: finishing_plan_end 변경이력 추적 추가 (2026-03-24) ✅ 완료
+
+### 목표
+ETL 변경 추적 대상에 finishing_plan_end(마무리계획종료일) 필드 추가. VIEW 변경이력 페이지에서 마무리계획종료일 변경도 확인 가능하게.
+
+### 변경 내역
+
+**step2_load.py**
+- `TRACKED_FIELDS`: `'finishing_plan_end': 'finishing_plan_end'` 추가 (6→7개)
+- `_prefetch_tracked_values()`: SELECT에 `finishing_plan_end` 추가, 캐시 dict에 매핑

@@ -1,6 +1,6 @@
 # CORE-ETL 백로그
 
-> 마지막 업데이트: 2026-03-18
+> 마지막 업데이트: 2026-03-24
 
 ---
 
@@ -14,6 +14,7 @@
 | 2-A | pi_start(가압시작) 변경이력 추적 추가 (TRACKED_FIELDS 5→6개) | ✅ 완료 |
 | 31A연동 | DUAL 모델 Tank QR 자동 생성 (step2_load.py) | ✅ v0.3.0 |
 | 3 | module_end 추가 + VIEW 실적뷰 기준 mech_start→공정종료일 변경 | ✅ v0.4.0 |
+| 3-A | finishing_plan_end(마무리계획종료일) 변경이력 추적 추가 (TRACKED_FIELDS 6→7개) | ✅ v0.4.1 |
 
 ---
 
