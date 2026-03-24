@@ -36,15 +36,16 @@ from datetime import date, timedelta
 import psycopg2
 
 
-# ── 변경 추적 대상 (6개 필드) ──────────────────────────────────
+# ── 변경 추적 대상 (7개 필드) ──────────────────────────────────
 # ETL 필드명 → DB 컬럼명
 TRACKED_FIELDS = {
-    'order_no':       'sales_order',
-    'planned_finish': 'ship_plan_date',
-    'mech_start':     'mech_start',
-    'pressure_test':  'pi_start',
-    'mech_partner':   'mech_partner',
-    'elec_partner':   'elec_partner',
+    'order_no':           'sales_order',
+    'planned_finish':     'ship_plan_date',
+    'mech_start':         'mech_start',
+    'pressure_test':      'pi_start',
+    'mech_partner':       'mech_partner',
+    'elec_partner':       'elec_partner',
+    'finishing_plan_end': 'finishing_plan_end',
 }
 
 
@@ -74,7 +75,7 @@ def _normalize_value(val):
 
 def _prefetch_tracked_values(cursor, serial_numbers):
     """
-    변경 추적 대상 6개 필드의 기존 값을 일괄 조회 → dict 반환
+    변경 추적 대상 7개 필드의 기존 값을 일괄 조회 → dict 반환
     레코드당 SELECT 제거 → 1회 쿼리로 전체 캐시
     Returns: {serial_number: {db_col: value, ...}, ...}
     """
@@ -84,7 +85,8 @@ def _prefetch_tracked_values(cursor, serial_numbers):
     # IN 절로 일괄 조회
     placeholders = ','.join(['%s'] * len(serial_numbers))
     cursor.execute(f"""
-        SELECT serial_number, sales_order, ship_plan_date, mech_start, pi_start, mech_partner, elec_partner
+        SELECT serial_number, sales_order, ship_plan_date, mech_start, pi_start,
+               mech_partner, elec_partner, finishing_plan_end
         FROM plan.product_info
         WHERE serial_number IN ({placeholders})
     """, serial_numbers)
@@ -92,12 +94,13 @@ def _prefetch_tracked_values(cursor, serial_numbers):
     cache = {}
     for row in cursor.fetchall():
         cache[row[0]] = {
-            'sales_order':    row[1],
-            'ship_plan_date': str(row[2]) if row[2] else None,
-            'mech_start':     str(row[3]) if row[3] else None,
-            'pi_start':       str(row[4]) if row[4] else None,
-            'mech_partner':   row[5],
-            'elec_partner':   row[6],
+            'sales_order':       row[1],
+            'ship_plan_date':    str(row[2]) if row[2] else None,
+            'mech_start':        str(row[3]) if row[3] else None,
+            'pi_start':          str(row[4]) if row[4] else None,
+            'mech_partner':      row[5],
+            'elec_partner':      row[6],
+            'finishing_plan_end': str(row[7]) if row[7] else None,
         }
     return cache
 
