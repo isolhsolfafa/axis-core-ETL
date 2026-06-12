@@ -106,10 +106,11 @@ jobs:
           retention-days: 30
           if-no-files-found: ignore
 
-      # ── 결과 요약 작성 (메일 본문용, 성공/실패 공통) ──────
-      # output/etl_result.json (etl_main.py가 작성)을 파싱해 적재 통계 추출
+      # ── 실패/취소 시 결과 요약 작성 (메일 본문용) ──────
+      # 성공 시는 GitHub Actions 대시보드에서 확인 (메일 발송 생략 — 일일 4통 노이즈 방지)
+      # 실패 시만 부분 적재 통계(있으면) + 진단 정보 본문에 포함
       - name: 결과 요약 작성
-        if: always()
+        if: failure() || cancelled()
         run: |
           if [ -f output/etl_result.json ]; then
             TOTAL=$(jq -r '.total_extracted // "N/A"' output/etl_result.json)
@@ -118,7 +119,7 @@ jobs:
             UPDATED=$(jq -r '.updated // "N/A"' output/etl_result.json)
             UNCHANGED=$(jq -r '.unchanged // "N/A"' output/etl_result.json)
             TIMESTAMP=$(jq -r '.timestamp // "N/A"' output/etl_result.json)
-            SUMMARY="📊 적재 결과:
+            SUMMARY="📊 실패 직전까지 부분 적재 결과:
             - 전체 추출: ${TOTAL}건
             - 필터 적용: ${FILTERED}건
             - 신규 적재: ${INSERTED}건
@@ -126,11 +127,12 @@ jobs:
             - 동일 스킵: ${UNCHANGED}건
             - 실행 시각: ${TIMESTAMP}"
           else
-            SUMMARY="⚠️ output/etl_result.json 없음 (Extract/Load 진입 전 실패 또는 timeout) — Actions 로그 참조"
+            SUMMARY="⚠️ output/etl_result.json 없음 (Extract/Load 완료 전 실패 또는 timeout)
+            → Actions 로그의 [HH:MM:SS] 마지막 라인이 hang 위치"
           fi
           {
             echo "MAIL_BODY<<MAILEOF"
-            echo "ETL 동기화 결과: ${{ job.status }}"
+            echo "ETL 동기화 ${{ job.status }} 발생"
             echo ""
             echo "${SUMMARY}"
             echo ""
@@ -140,16 +142,18 @@ jobs:
             echo "Mode:   ${{ inputs.mode || 'schedule' }}"
             echo "Run:    ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
             echo "Commit: ${{ github.sha }}"
+            echo ""
+            echo "→ Run URL 클릭 후 'Run ETL Pipeline' step의 마지막 [HH:MM:SS] 라인 확인"
             echo "MAILEOF"
           } >> "$GITHUB_ENV"
 
-      # ── SMTP 메일 알림 → dkkim1@gst-in.com (성공/실패 모두) ──
+      # ── SMTP 메일 알림 → dkkim1@gst-in.com (실패/취소 시만) ──
       # 필요 Secrets (Railway variables 동일 이름으로 복사):
       #   SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, SMTP_FROM_NAME
       # 미등록 상태에서는 이 step만 실패 (ETL 적재 자체는 정상 완료)
       # 추후 brityworks 도입 시 이 step을 API call step으로 교체 예정
-      - name: ETL 결과 메일 알림
-        if: always()
+      - name: ETL 실패/취소 메일 알림
+        if: failure() || cancelled()
         uses: dawidd6/action-send-mail@v17  # v13+ Node 24 호환
         with:
           server_address: ${{ secrets.SMTP_HOST }}
@@ -159,5 +163,5 @@ jobs:
           password: ${{ secrets.SMTP_PASSWORD }}
           from: "${{ secrets.SMTP_FROM_NAME }} <${{ secrets.SMTP_USER }}>"
           to: dkkim1@gst-in.com
-          subject: "${{ job.status == 'success' && '✅' || '🔴' }} ETL Sync ${{ job.status }} — run ${{ github.run_id }}"
+          subject: "🔴 ETL Sync ${{ job.status }} — run ${{ github.run_id }}"
           body: ${{ env.MAIL_BODY }}
