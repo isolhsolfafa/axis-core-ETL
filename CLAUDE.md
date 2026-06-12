@@ -5,6 +5,33 @@ GST 제조 현장 생산 메타데이터 ETL 파이프라인.
 Teams Excel(SCR 생산현황) → PostgreSQL 자동 적재.
 GitHub Actions cron으로 매주 월요일 자동 실행.
 
+## 모델 설정 (Claude Code 작업 시) — 2026-06-10 갱신
+
+> `AXIS-OPS/CLAUDE.md` 모델 정책과 동일 원칙. 본 레포는 단일 목적 ETL이라 리드/워커 분리 없음 — **단일 에이전트가 기본 Opus 4.8, 복잡 시 한시 Fable 5 승격**.
+
+### 모델 정책 (하이브리드)
+- **기본**: `claude-opus-4-8` (Opus 최상위, 2026-06-09 출시)
+  - ⚠️ `claude-opus-4-7` 고착 금지 (구버전 — 2026-06-09 AXIS-OPS 리드 4.7 고착 사례 있음)
+- **복잡 판단 한시 승격**: `claude-fable-5` (Fable, Mythos-class, 2026-06-09 출시)
+  - **승격 트리거 (1개+ 해당 시)**:
+    1. DB 스키마/migration 설계 (예: `etl.change_log` 컬럼 확장, S/N 변경 추적 보조키 설계)
+    2. cross-repo 영향 큰 변경 (AXIS-OPS DB 컬럼/API · AXIS-VIEW 화면 동반 수정)
+    3. Graph API/MSAL 인증 root-cause 디버깅 (Opus로 막힐 때)
+    4. 반복 실패한 데이터 정합성 분석 (S/N 매칭·UPSERT 충돌·change_log 누락 등)
+    5. 회귀 리스크 큰 ETL 파이프라인 리팩토링 (batch 크기·트랜잭션 경계 변경)
+  - ⚠️ Fable 비용 = $10/M in · $50/M out (Opus 4.8 약 2배) → **복잡 판단에만 한시 투입(상시 사용 X)**
+  - ⚠️ Fable 고위험 쿼리(사이버보안·생물/화학)는 자동 Opus 4.8 fallback (ETL 업무 영향 거의 없음)
+- **하위 모델 사용 금지** (설계 오류·컨텍스트 누락 리스크)
+
+### 모델 버전 관리 규칙
+- **업데이트 트리거**: 새 Claude 모델(Opus/Sonnet/Fable) 릴리스 감지 시 이 섹션 즉시 갱신
+- **세션 시작 체크**: 현재 가용 모델 확인 → CLAUDE.md 기재 버전과 대조 → 신규 있으면 **먼저 갱신 후** 작업 시작
+- **갱신 시 함께 업데이트** (3개 레포 동기화 의무):
+  - `AXIS-CORE/CORE-ETL/CLAUDE.md` (이 파일) — 위 "모델 정책" 섹션
+  - `AXIS-OPS/CLAUDE.md` L10, L16 (리드·워커 모델 라인)
+  - `AXIS-VIEW/CLAUDE.md` L33, L39 (모델 라인)
+  - `PROGRESS.md`에 ADR 형식으로 모델 전환 이유·영향 1줄 기록
+
 ## 기술 스택
 - Python 3.10+
 - Microsoft Graph API (MSAL Client Credentials Flow)
