@@ -54,7 +54,10 @@ jobs:
   etl-sync:
     name: Run ETL Pipeline
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # 30분 → 60분으로 확장 (2026-06-12)
+    # 이유: 1542건 적재 시 배치당 ~11분 × 4배치 = 약 44분 필요 (Railway DB 네트워크 왕복 지연)
+    # 6/11 cancel 사건도 동일 원인으로 추정. 근본 해결은 batch UPSERT 최적화 (별도 sprint)
+    timeout-minutes: 60
 
     steps:
       - name: Checkout repository
