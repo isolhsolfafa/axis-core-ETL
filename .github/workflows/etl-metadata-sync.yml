@@ -15,6 +15,12 @@
 
 name: ETL Metadata Sync
 
+# 동시 실행 방지: 직전 run이 hang 상태이면 다음 cron은 취소가 아니라 대기
+# (사건 ① 후보 ② "schedule run 겹침" 차단)
+concurrency:
+  group: etl-sync
+  cancel-in-progress: false
+
 on:
   # 수동 트리거 (GitHub UI에서 "Run workflow" 버튼)
   workflow_dispatch:
@@ -90,9 +96,33 @@ jobs:
 
       - name: Upload ETL results
         if: always()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: etl-result-${{ github.run_number }}
           path: output/etl_result.json
           retention-days: 30
           if-no-files-found: ignore
+
+      # ── 실패/취소 시 SMTP 메일 알림 → dkkim1@gst-in.com ──────
+      # 선결: GitHub Secrets에 SMTP_HOST/SMTP_PORT/SMTP_USERNAME/SMTP_PASSWORD 등록 필요
+      # 미등록 상태에서는 send-mail step만 실패 (ETL 적재 자체는 정상 완료)
+      - name: ETL 실패/취소 메일 알림
+        if: failure() || cancelled()
+        uses: dawidd6/action-send-mail@v4
+        with:
+          server_address: ${{ secrets.SMTP_HOST }}
+          server_port: ${{ secrets.SMTP_PORT }}
+          secure: false        # 587/STARTTLS면 false, 465/SSL이면 true
+          username: ${{ secrets.SMTP_USERNAME }}
+          password: ${{ secrets.SMTP_PASSWORD }}
+          from: "AXIS ETL Bot <${{ secrets.SMTP_USERNAME }}>"
+          to: dkkim1@gst-in.com
+          subject: "🔴 ETL Sync ${{ job.status }} — run ${{ github.run_id }}"
+          body: |
+            ETL 동기화 ${{ job.status }} 발생
+
+            - Repo:   ${{ github.repository }}
+            - Event:  ${{ github.event_name }}
+            - Mode:   ${{ inputs.mode || 'schedule' }}
+            - Run:    ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+            - Commit: ${{ github.sha }}

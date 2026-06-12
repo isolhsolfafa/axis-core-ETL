@@ -21,11 +21,22 @@ Microsoft Graph API로 OneDrive에서 Excel 다운로드 + pandas 파싱
 import os
 import io
 import re
+import time
 import urllib.parse
 
 import msal
 import requests
 import pandas as pd
+
+
+def _ts(msg):
+    """타임스탬프 로그 — hang 위치 추적용 (Actions 로그 버퍼링 회피: flush=True)"""
+    print(f"[{time.strftime('%H:%M:%S')}] {msg}", flush=True)
+
+
+# Graph API HTTP 호출 기본 timeout: (connect 30s, read 60s)
+# — timeout 명시 안 하면 무한 대기 → 30분 timeout 누적 후 cancel (6/11 사건 원인 후보 ③)
+HTTP_TIMEOUT = (30, 60)
 
 
 # ── Graph API 설정 ──────────────────────────────────────────
@@ -92,6 +103,7 @@ EXTRA_COLUMNS = {
 
 def get_graph_token():
     """MSAL Client Credentials Flow로 access_token 획득"""
+    _ts("[Auth] Graph token 발급 시도 (MSAL Client Credentials)")
     tenant_id = os.environ["TEAMS_TENANT_ID"]
     client_id = os.environ["TEAMS_CLIENT_ID"]
     client_secret = os.environ["TEAMS_CLIENT_SECRET"]
@@ -107,6 +119,7 @@ def get_graph_token():
     )
     if "access_token" not in result:
         raise Exception(f"Token 획득 실패: {result.get('error_description')}")
+    _ts("[Auth] Graph token 발급 완료")
     return result["access_token"]
 
 
@@ -127,7 +140,8 @@ def _download_by_doc_id():
     headers = _get_graph_headers()
 
     url = f"https://graph.microsoft.com/v1.0/users/{user_email}/drive/items/{source_doc_id}"
-    resp = requests.get(url, headers=headers)
+    _ts(f"[Download A] 메타 조회: items/{source_doc_id[:12]}...")
+    resp = requests.get(url, headers=headers, timeout=HTTP_TIMEOUT)
 
     if resp.status_code == 404:
         print(f"  [Warning] SOURCE_DOC_ID ({source_doc_id}) 파일 없음 — fallback 전환")
@@ -135,8 +149,10 @@ def _download_by_doc_id():
     resp.raise_for_status()
 
     download_url = resp.json()["@microsoft.graph.downloadUrl"]
-    file_resp = requests.get(download_url)
+    _ts("[Download A] 파일 바이트 다운로드 시작")
+    file_resp = requests.get(download_url, timeout=HTTP_TIMEOUT)
     file_resp.raise_for_status()
+    _ts(f"[Download A] 다운로드 완료 ({len(file_resp.content) // 1024} KB)")
     return io.BytesIO(file_resp.content)
 
 
@@ -149,7 +165,8 @@ def _download_by_folder_search():
     # 폴더 목록 조회
     encoded_path = urllib.parse.quote(base_path)
     url = f"https://graph.microsoft.com/v1.0/users/{user_email}/drive/root:/{encoded_path}:/children"
-    resp = requests.get(url, headers=headers)
+    _ts(f"[Download B] 폴더 목록 조회: {base_path}")
+    resp = requests.get(url, headers=headers, timeout=HTTP_TIMEOUT)
     if resp.status_code != 200:
         raise Exception(f"폴더 조회 실패: {resp.status_code} - {resp.text}")
 
@@ -171,7 +188,8 @@ def _download_by_folder_search():
 
     # 폴더 안에서 SCR 파일 찾기
     folder_url = f"https://graph.microsoft.com/v1.0/users/{user_email}/drive/items/{latest['id']}/children"
-    folder_resp = requests.get(folder_url, headers=headers)
+    _ts(f"[Download B] 주차 폴더 내부 조회: {latest['name']}")
+    folder_resp = requests.get(folder_url, headers=headers, timeout=HTTP_TIMEOUT)
     files = folder_resp.json().get("value", [])
 
     scr_file = None
@@ -184,9 +202,11 @@ def _download_by_folder_search():
         raise Exception(f"SCR 파일 없음: {latest['name']}")
 
     download_url = scr_file["@microsoft.graph.downloadUrl"]
-    file_resp = requests.get(download_url)
+    _ts(f"[Download B] 파일 바이트 다운로드 시작: {scr_file['name']}")
+    file_resp = requests.get(download_url, timeout=HTTP_TIMEOUT)
     file_resp.raise_for_status()
     print(f"  [Fallback] 파일: {scr_file['name']}")
+    _ts(f"[Download B] 다운로드 완료 ({len(file_resp.content) // 1024} KB)")
     return io.BytesIO(file_resp.content)
 
 
@@ -381,11 +401,14 @@ def extract_from_teams_excel():
     Graph API로 Teams Excel (SCR 생산현황) 다운로드 + 파싱 → metadata list 반환
     SCR-Schedule 의존성 없이 독립 실행 가능
     """
+    _ts("[Extract] step1 시작 — Excel 다운로드 진입")
     # Excel 다운로드
     file_bytes = _download_scr_excel()
+    _ts("[Extract] 다운로드 종료 — Excel 파싱 진입")
 
     # Excel 파싱
     df, sn_col = _parse_excel(file_bytes)
+    _ts(f"[Extract] 파싱 완료 (행 {len(df)}개)")
 
     # 추가 컬럼 Series 준비
     extra_series = {}
@@ -454,6 +477,7 @@ def extract_from_teams_excel():
             converted.append(item)
 
     print(f"[Extract] Teams Excel 데이터 {len(converted)}건 추출 완료 (Graph API)")
+    _ts(f"[Extract] step1 종료 ({len(converted)}건)")
     return converted
 
 

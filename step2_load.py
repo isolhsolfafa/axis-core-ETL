@@ -31,9 +31,15 @@ Sprint 31A: DUAL 모델 Tank QR 자동 생성
 """
 
 import os
+import time
 from datetime import date, timedelta
 
 import psycopg2
+
+
+def _ts(msg):
+    """타임스탬프 로그 — hang 위치 추적용 (Actions 로그 버퍼링 회피: flush=True)"""
+    print(f"[{time.strftime('%H:%M:%S')}] {msg}", flush=True)
 
 
 # ── 변경 추적 대상 (7개 필드) ──────────────────────────────────
@@ -354,9 +360,16 @@ def load_to_postgres(metadata_list, db_url=None):
     if db_url is None:
         db_url = get_db_url()
 
-    conn = psycopg2.connect(db_url)
+    _ts("[Load] step2 시작 — DB 연결 시도")
+    # lock_timeout=60s : 락 대기 60초 초과 시 즉시 실패 (idle in transaction hang 방지)
+    # statement_timeout=300s : 단일 쿼리 5분 초과 시 실패 (UPSERT 1건당 충분)
+    conn = psycopg2.connect(
+        db_url,
+        options="-c lock_timeout=60s -c statement_timeout=300s",
+    )
     cursor = conn.cursor()
     cursor.execute("SET timezone = 'Asia/Seoul'")
+    _ts("[Load] DB 연결 완료 + timezone/lock_timeout/statement_timeout 설정")
 
     total = len(metadata_list)
     total_batches = (total + BATCH_SIZE - 1) // BATCH_SIZE
@@ -364,17 +377,20 @@ def load_to_postgres(metadata_list, db_url=None):
 
     # 변경 추적용 기존 값 일괄 조회 (1회 쿼리)
     all_sns = [item['serial_number'] for item in metadata_list]
+    _ts(f"[Load] prefetch 시작 ({len(all_sns)}건 S/N IN 쿼리)")
     existing_cache = _prefetch_tracked_values(cursor, all_sns)
-    print(f"[Load] 변경 추적 대상: 기존 {len(existing_cache)}건 / 전체 {len(all_sns)}건")
+    _ts(f"[Load] prefetch 완료: 기존 {len(existing_cache)}건 / 전체 {len(all_sns)}건")
 
     results = []
     error_count = 0
     total_changes = 0
 
+    _ts(f"[Load] UPSERT 루프 시작 ({total_batches}개 배치)")
     for batch_idx in range(total_batches):
         batch_start = batch_idx * BATCH_SIZE
         batch_end = min(batch_start + BATCH_SIZE, total)
         batch = metadata_list[batch_start:batch_end]
+        _ts(f"[Load] 배치 {batch_idx + 1}/{total_batches} 시작 ({batch_start}~{batch_end - 1})")
 
         for item in batch:
             sn = item['serial_number']
@@ -398,9 +414,11 @@ def load_to_postgres(metadata_list, db_url=None):
                 print(f"  [❌ Error] {sn}: {e}")
 
         # 배치 단위 커밋
+        _ts(f"[Load] 배치 {batch_idx + 1}/{total_batches} commit 시도")
         conn.commit()
         print(f"  [📦 배치 {batch_idx + 1}/{total_batches}] {len(batch)}건 커밋 완료 ({batch_end}/{total})")
 
+    _ts("[Load] 전체 배치 완료 — 연결 종료")
     conn.close()
 
     # 결과 요약 출력
