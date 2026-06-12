@@ -106,26 +106,58 @@ jobs:
           retention-days: 30
           if-no-files-found: ignore
 
-      # ── 실패/취소 시 SMTP 메일 알림 → dkkim1@gst-in.com ──────
-      # 선결: GitHub Secrets에 SMTP_HOST/SMTP_PORT/SMTP_USERNAME/SMTP_PASSWORD 등록 필요
-      # 미등록 상태에서는 send-mail step만 실패 (ETL 적재 자체는 정상 완료)
-      - name: ETL 실패/취소 메일 알림
-        if: failure() || cancelled()
+      # ── 결과 요약 작성 (메일 본문용, 성공/실패 공통) ──────
+      # output/etl_result.json (etl_main.py가 작성)을 파싱해 적재 통계 추출
+      - name: 결과 요약 작성
+        if: always()
+        run: |
+          if [ -f output/etl_result.json ]; then
+            TOTAL=$(jq -r '.total_extracted // "N/A"' output/etl_result.json)
+            FILTERED=$(jq -r '.filtered // "N/A"' output/etl_result.json)
+            INSERTED=$(jq -r '.inserted // "N/A"' output/etl_result.json)
+            UPDATED=$(jq -r '.updated // "N/A"' output/etl_result.json)
+            UNCHANGED=$(jq -r '.unchanged // "N/A"' output/etl_result.json)
+            TIMESTAMP=$(jq -r '.timestamp // "N/A"' output/etl_result.json)
+            SUMMARY="📊 적재 결과:
+            - 전체 추출: ${TOTAL}건
+            - 필터 적용: ${FILTERED}건
+            - 신규 적재: ${INSERTED}건
+            - 변경 반영: ${UPDATED}건
+            - 동일 스킵: ${UNCHANGED}건
+            - 실행 시각: ${TIMESTAMP}"
+          else
+            SUMMARY="⚠️ output/etl_result.json 없음 (Extract/Load 진입 전 실패 또는 timeout) — Actions 로그 참조"
+          fi
+          {
+            echo "MAIL_BODY<<MAILEOF"
+            echo "ETL 동기화 결과: ${{ job.status }}"
+            echo ""
+            echo "${SUMMARY}"
+            echo ""
+            echo "─────────────────────"
+            echo "Repo:   ${{ github.repository }}"
+            echo "Event:  ${{ github.event_name }}"
+            echo "Mode:   ${{ inputs.mode || 'schedule' }}"
+            echo "Run:    ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            echo "Commit: ${{ github.sha }}"
+            echo "MAILEOF"
+          } >> "$GITHUB_ENV"
+
+      # ── SMTP 메일 알림 → dkkim1@gst-in.com (성공/실패 모두) ──
+      # 필요 Secrets (Railway variables 동일 이름으로 복사):
+      #   SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, SMTP_FROM_NAME
+      # 미등록 상태에서는 이 step만 실패 (ETL 적재 자체는 정상 완료)
+      # 추후 brityworks 도입 시 이 step을 API call step으로 교체 예정
+      - name: ETL 결과 메일 알림
+        if: always()
         uses: dawidd6/action-send-mail@v17  # v13+ Node 24 호환
         with:
           server_address: ${{ secrets.SMTP_HOST }}
           server_port: ${{ secrets.SMTP_PORT }}
           secure: false        # 587/STARTTLS면 false, 465/SSL이면 true
-          username: ${{ secrets.SMTP_USERNAME }}
+          username: ${{ secrets.SMTP_USER }}
           password: ${{ secrets.SMTP_PASSWORD }}
-          from: "AXIS ETL Bot <${{ secrets.SMTP_USERNAME }}>"
+          from: "${{ secrets.SMTP_FROM_NAME }} <${{ secrets.SMTP_USER }}>"
           to: dkkim1@gst-in.com
-          subject: "🔴 ETL Sync ${{ job.status }} — run ${{ github.run_id }}"
-          body: |
-            ETL 동기화 ${{ job.status }} 발생
-
-            - Repo:   ${{ github.repository }}
-            - Event:  ${{ github.event_name }}
-            - Mode:   ${{ inputs.mode || 'schedule' }}
-            - Run:    ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-            - Commit: ${{ github.sha }}
+          subject: "${{ job.status == 'success' && '✅' || '🔴' }} ETL Sync ${{ job.status }} — run ${{ github.run_id }}"
+          body: ${{ env.MAIL_BODY }}
