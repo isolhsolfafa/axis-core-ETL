@@ -4,7 +4,7 @@
 GST 제조 현장 생산 메타데이터 ETL 파이프라인 — Teams Excel(SCR 생산현황) → PostgreSQL 자동 적재.
 AXIS-OPS DB에 직접 적재하며, GitHub Actions cron으로 주기적 자동 실행.
 
-> **현재 버전**: v0.4.1 (finishing_plan_end 변경이력 추적, 2026-03-24)
+> **현재 버전**: v0.4.2 (운영 사건 ① 대응 — 6/11 timeout + Node 24 + SMTP, 2026-06-13)
 > **저장소**: axis-core-etl (AXIS-OPS에서 분리)
 > **DB 대상**: AXIS-OPS Railway PostgreSQL (plan.product_info, public.qr_registry)
 
@@ -225,3 +225,76 @@ ETL 변경 추적 대상에 finishing_plan_end(마무리계획종료일) 필드 
 **step2_load.py**
 - `TRACKED_FIELDS`: `'finishing_plan_end': 'finishing_plan_end'` 추가 (6→7개)
 - `_prefetch_tracked_values()`: SELECT에 `finishing_plan_end` 추가, 캐시 dict에 매핑
+
+---
+
+## 운영 사건 ①: 6/11 cron 취소 + Node 24 + SMTP 알림 대응 (2026-06-11 ~ 2026-06-13) ✅ 완료
+
+### 배경
+- 2026-06-11 schedule run 1건이 `The operation was canceled` 으로 종료
+- 동시에 GitHub Actions 런타임이 `actions/upload-artifact@v5` Node 20 deprecation 경고 표시 (2026-06-16부터 강제 Node 24)
+- ETL 실패가 "침묵"되는 구조 (알림 부재) — 수동 확인으로만 발견
+
+### 진단 (트래킹 로그로 확정 — 6/12)
+- 30분 timeout 초과로 cancel 확정 (Annotation: `exceeded the maximum execution time of 30m0s`)
+- 6/12 16:00 KST 재실패 run #27411398223 로그 분석:
+  ```
+  10:57:55  배치 1/4 시작
+  11:09:07  배치 1/4 commit (11분 12초 소요)
+  11:09:07  배치 2/4 시작
+  11:20:00  배치 2/4 commit (10분 53초 소요)
+  11:20:00  배치 3/4 시작 → 30분 초과로 cancel
+  ```
+- **결론**: hang/락 충돌 아님. 배치당 약 11분 × 4배치 = 약 44분 필요한데 timeout 30분이라 잘림
+- **원인**: Railway DB 네트워크 왕복 지연 + 레코드당 SAVEPOINT/UPSERT/SELECT 5회 round-trip × 1542건 ≈ 7700 round-trip
+- 6/11 사건도 동일 원인 추정 (락 가설 기각)
+
+### 변경 내역
+
+**step2_load.py** (`2be5b81`)
+- `_ts()` 헬퍼 추가 (timestamped 로그, `flush=True`로 Actions 버퍼링 회피)
+- `load_to_postgres` 진입/연결/prefetch/배치별 진행에 `_ts()` 호출 6개
+- `psycopg2.connect()`에 `options="-c lock_timeout=60s -c statement_timeout=300s"` 추가
+  → 락 대기 60초 / 단일 쿼리 5분 초과 시 즉시 실패
+
+**step1_extract.py** (`2be5b81`)
+- `_ts()` 헬퍼 + `HTTP_TIMEOUT = (30, 60)` 상수 추가
+- `get_graph_token()`, `_download_by_doc_id()`, `_download_by_folder_search()`, `extract_from_teams_excel()` 진입/종료에 `_ts()` 호출
+- 모든 `requests.get()` 호출에 `timeout=HTTP_TIMEOUT` 명시 (이전엔 무한 대기)
+
+**.github/workflows/etl-metadata-sync.yml** (`2be5b81`, `db9839e`, `7eba85a`, `e188cbf`, `495172f`)
+- `concurrency: { group: etl-sync, cancel-in-progress: false }` 추가 → schedule run 겹침 방지
+- `actions/upload-artifact@v5` → **`@v7`** (Node 24 호환)
+- `dawidd6/action-send-mail@v4` → **`@v17`** (Node 24 호환)
+- `timeout-minutes: 30 → 60` (배치 적재 시간 확보)
+- SMTP 메일 알림 step 추가 (`dkkim1@gst-in.com`, port 465 SSL, `secure: true`)
+  - 트리거: `if: failure() || cancelled()` (실패/취소 시만 발송, 성공은 대시보드 확인)
+  - 본문: `output/etl_result.json` 부분 적재 통계 + Run URL + hang 위치 가이드
+
+### 검증 결과
+- ✅ 6/13 SMTP 검증 메일 정상 수신 (`dkkim1@gst-in.com`)
+- ✅ Node 20 deprecation 경고 사라짐 확인 (`@v7`, `@v17` 적용 후)
+- ✅ timestamped 로그로 hang 위치 즉시 식별 가능 (배치 처리 시점)
+- ⏳ 다음 schedule run (2026-06-13 토 07:00 KST 이후) 정상 완료 — timeout 60분으로 처리 가능
+
+### GitHub Secrets 추가 등록 (5종)
+| Secret | 값 | 출처 |
+|---|---|---|
+| `SMTP_HOST` | (Railway 동일값) | Railway variables |
+| `SMTP_PORT` | `465` (SSL) | Railway variables |
+| `SMTP_USER` | (Railway 동일값) | Railway variables |
+| `SMTP_PASSWORD` | (Railway 동일값) | Railway variables |
+| `SMTP_FROM_NAME` | `G-AXIS` | Railway variables |
+
+### CLAUDE.md 동기화
+- 모델 설정 섹션 신규 추가 (Opus 4.8 기본 / Fable 5 한시 승격) — AXIS-OPS와 동기화 (`dcb196e`)
+
+### 후속 BACKLOG
+- 🟠 AXIS-OPS pytest.yml Node 24 호환화 (시한 2026-06-16) — 별도 sprint
+- 🟡 ETL 배치 적재 속도 최적화 — `_prefetch_tracked_values` 확장 + `psycopg2.extras.execute_batch` 도입
+- 🟡 serial_number 변경 추적 — 보조 식별자(O/N) 기반 매칭 로직 (이전 대화 기록)
+
+### 문서
+- `ETL_INCIDENT_20260611_AND_NODE24_PLAN.md` — 사건 기록 + 조치 + 완료 보고 (전 과정 trail)
+- `BACKLOG.md` — 후속 항목 등록
+- `CLAUDE.md` — 모델 설정 섹션 추가

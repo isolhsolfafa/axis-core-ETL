@@ -101,7 +101,7 @@ WHERE state = 'idle in transaction';
 
 > 사건 ①·② + P0 ②를 한 번의 workflow 수정으로 해소
 
-- [ ] **(a) Node 24 호환화 — 양 레포 모두 대상** (`upload-artifact`는 `@v7` 핀 권장):
+- [x] **(a) Node 24 호환화 — 양 레포 모두 대상** (`upload-artifact`는 `@v7` 핀 권장):
   - **(a-1) CORE-ETL etl-metadata-sync.yml L93**:
     - `actions/upload-artifact@v5` → **`@v7`** (Node 24 명시)
   - **(a-2) AXIS-OPS pytest.yml** — 액션 3종 모두 메이저 버전 업:
@@ -109,7 +109,7 @@ WHERE state = 'idle in transaction';
     - `actions/setup-python@v5` → `@v6` (Node 24)
     - `actions/upload-artifact@v4` → **`@v7`** (Node 24)
   - **검증**: CI 1회 돌려 deprecation 경고 사라지는지 확인. 잔존 시 `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24=true` env로 fallback
-- [ ] **(b) 실패/취소 SMTP 알림 → `dkkim1@gst-in.com`** — 침묵 실패 차단 (P0 ②). Teams 미사용 결정에 따라 메일 채널로 확정:
+- [x] **(b) 실패/취소 SMTP 알림 → `dkkim1@gst-in.com`** — 침묵 실패 차단 (P0 ②). Teams 미사용 결정에 따라 메일 채널로 확정:
   ```yaml
   - name: ETL 실패/취소 메일 알림
     if: failure() || cancelled()
@@ -143,20 +143,20 @@ WHERE state = 'idle in transaction';
   1. GST 메일 서버 (Office 365 / 자체 서버) 확인
   2. ETL 봇 전용 발신 계정 마련 — 기존 사용자 계정 자격증명을 secret에 넣지 말 것 (퇴사/MFA 변경 시 알림 끊김)
   3. M365라면 SMTP AUTH 허용 정책 확인 (테넌트 차원에서 막혀 있으면 IT 협조 필요)
-- [ ] **(c) concurrency 가드** — 겹침 실행 방지 (사건 ① 후보 ②번 차단):
+- [x] **(c) concurrency 가드** — 겹침 실행 방지 (사건 ① 후보 ②번 차단):
   ```yaml
   concurrency:
     group: etl-sync
     cancel-in-progress: false   # 겹치면 취소 대신 대기
   ```
-- [ ] **(d) DB 타임아웃** — hang 대신 빠른 실패 (사건 ① 후보 ①번 차단):
+- [x] **(d) DB 타임아웃** — hang 대신 빠른 실패 (사건 ① 후보 ①번 차단):
   ```python
   conn = psycopg2.connect(DATABASE_URL,
       options="-c lock_timeout=60s -c statement_timeout=300s")
   ```
   → 락이면 60초 만에 명확한 에러 + (b) 알림 발송. 30분 침묵 대기 구조 제거.
   ⚠️ **검증 필요**: `statement_timeout=300s`는 세션 단일 쿼리당 5분 — UPSERT 한 건당으로는 충분하나, ETL 트랜잭션 구조가 단일 트랜잭션 전체 적재면 5분 초과 시 실패. 반기 자동 필터 1회분 소요 측정 후 값 조정 (여유분 2배 권장)
-- [ ] **(e) step별 timestamped 로그** — 다음 hang 시 어느 단계에서 멈췄는지 즉시 식별 (사건 ① 후보 ③번 추적):
+- [x] **(e) step별 timestamped 로그** — 다음 hang 시 어느 단계에서 멈췄는지 즉시 식별 (사건 ① 후보 ③번 추적):
   ```python
   import time
   def _ts(msg): print(f"[{time.strftime('%H:%M:%S')}] {msg}", flush=True)
@@ -176,15 +176,71 @@ WHERE state = 'idle in transaction';
 | 4️⃣ | step2_load.py lock_timeout + timestamped 로그 | (d)(e) | 1시간 |
 | 5️⃣ | 통합 검증 (CORE-ETL 1회 + AXIS-OPS pytest 1회 + 의도적 실패 1회로 메일 수신 테스트) | 완료 기준 | 15분 |
 
+> 진행 상황 (2026-06-13 갱신):
+> - ✅ 1️⃣ SMTP 인프라 확보 + secrets 5종 등록 (port 465 SSL 확정)
+> - ✅ 2️⃣ Node 24 호환화 (CORE-ETL `@v7`/`@v17`) — AXIS-OPS는 별도 sprint로 분리
+> - ✅ 3️⃣ concurrency + 실패 알림 추가
+> - ✅ 4️⃣ lock_timeout + timestamped 로그
+> - ✅ 5️⃣ 메일 수신 정상 확인 (테스트 workflow로 검증 후 삭제)
+> - **추가 발견**: timeout-minutes 30→60 확장 (배치당 11분 × 4 = 44분 처리량)
+
 ### 완료 기준
 
 - **CORE-ETL** 수동 실행 1회: ✅ 미적재분 복구 + ✅ timestamped 로그 출력 + ✅ Node 20 deprecation 경고 사라짐
 - **CORE-ETL** 의도적 실패 1회 (예: invalid SOURCE_DOC_ID로 dry-run): ✅ `dkkim1@gst-in.com` 메일 수신 확인
-- **AXIS-OPS** pytest 실행 1회: ✅ 액션 v5/v6/v7 정상 동작 + Node 20 경고 사라짐
+- **AXIS-OPS** pytest 실행 1회: ⏳ 별도 sprint (6/16 이전)
 
 ---
 
-## 4. 참고
+## 4. 완료 보고 (2026-06-13)
+
+### 실제 진행 결과
+
+| 조치 | 상태 | 비고 / 커밋 |
+|---|---|---|
+| (a) Node 24 호환화 — CORE-ETL `upload-artifact@v5→@v7` + `dawidd6/action-send-mail@v4→@v17` | ✅ 완료 | `2be5b81`, `db9839e` |
+| (a) Node 24 호환화 — AXIS-OPS pytest.yml | ⏳ 미진행 (별도 sprint) | 6/16 이전 진행 필요 |
+| (b) SMTP 메일 알림 — `dkkim1@gst-in.com` (port 465 SSL) | ✅ 완료 + 동작 확인 | `e188cbf`, `495172f` / 6/13 테스트 메일 정상 수신 |
+| (c) concurrency 가드 | ✅ 완료 | `2be5b81` |
+| (d) DB 타임아웃 (`lock_timeout=60s`, `statement_timeout=300s`) | ✅ 완료 | `2be5b81` |
+| (e) step별 timestamped 로그 (`_ts()`) | ✅ 완료 | `2be5b81` |
+| **추가**: workflow `timeout-minutes: 30 → 60` | ✅ 완료 | `7eba85a` |
+
+### 사건 ① 진짜 원인 (트래킹 로그로 확정)
+
+> 6/12 16:00 KST 실패 run #27411398223 로그 분석 결과:
+
+```
+10:57:55  배치 1/4 시작
+11:09:07  배치 1/4 commit (11분 12초 소요)
+11:09:07  배치 2/4 시작
+11:20:00  배치 2/4 commit (10분 53초 소요)
+11:20:00  배치 3/4 시작 → 30분 timeout으로 cancel
+```
+
+- **결론**: hang/락 충돌 아님. **배치당 ~11분 × 4배치 ≈ 44분 필요**한데 timeout 30분이라 잘림
+- **원인**: Railway DB 네트워크 왕복 지연 + 레코드당 SAVEPOINT/UPSERT/SELECT 5회 round-trip × 1542건 ≈ 7700 round-trip
+- **6/11 사건도 동일 원인일 확률 매우 높음** (가설 ①·②·③ 모두 기각)
+
+### GitHub Secrets 등록 완료 (2026-06-13)
+
+| Secret | 값 | 출처 |
+|---|---|---|
+| `SMTP_HOST` | ✅ 등록 | Railway variables 복사 |
+| `SMTP_PORT` | ✅ 등록 (`465`) | Railway variables 복사 |
+| `SMTP_USER` | ✅ 등록 | Railway variables 복사 |
+| `SMTP_PASSWORD` | ✅ 등록 | Railway variables 복사 |
+| `SMTP_FROM_NAME` | ✅ 등록 (`G-AXIS`) | Railway variables 복사 |
+
+### 후속 BACKLOG 등록 (`BACKLOG.md` 참조)
+
+- 🟠 AXIS-OPS pytest.yml Node 24 호환화 (시한 2026-06-16)
+- 🟡 ETL 배치 적재 속도 최적화 — `_prefetch_tracked_values` 확장 + `psycopg2.extras.execute_batch` 도입
+- 🟡 serial_number 변경 추적 — 보조 식별자(O/N) 기반 매칭 로직 (이전 대화 기록)
+
+---
+
+## 5. 참고
 
 - 리스크 검토 보고서(Notion 🛡️ §8) P0 ② — 본 건으로 우선순위 재확인됨
 - GitHub 공지: github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners

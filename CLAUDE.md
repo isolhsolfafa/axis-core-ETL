@@ -127,3 +127,18 @@ python etl_main.py
 - print 로그에 이모지 사용 (✅ ⚠️ ❌ 📥 📂)
 - 환경변수는 하드코딩 금지 — os.environ 또는 .env에서 로드
 - Sprint 완료 시 PROGRESS.md 업데이트 + SPRINT_COMPLETION_TEMPLATE.md에 맞춰 기록
+
+### 트래킹 로그 규칙 (운영 사건 ① 이후, 2026-06-13)
+- 진입점/외부 호출 직전·직후에 `_ts(msg)` 호출로 timestamped 로그 출력
+  - step1: `get_graph_token`, `_download_by_doc_id/_folder_search`, `extract_from_teams_excel` 진입/종료
+  - step2: `load_to_postgres` 진입, DB 연결 직후, prefetch 시작/완료, 배치별 시작/commit
+- `_ts()` 구현 (각 step 파일에 인라인):
+  ```python
+  def _ts(msg):
+      """타임스탬프 로그 — hang 위치 추적용 (Actions 로그 버퍼링 회피)"""
+      print(f"[{time.strftime('%H:%M:%S')}] {msg}", flush=True)
+  ```
+- **`flush=True` 필수** — Actions 로그 버퍼링 때문에 hang 시 마지막 출력이 가려짐
+- 외부 호출(requests/psycopg2)에 항상 timeout 명시:
+  - `requests.get(..., timeout=HTTP_TIMEOUT)` (connect 30s, read 60s)
+  - `psycopg2.connect(..., options="-c lock_timeout=60s -c statement_timeout=300s")`
